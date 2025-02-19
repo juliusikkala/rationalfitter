@@ -1,9 +1,13 @@
 PolynomialPinner
 ================
 
-This tool creates N-D polynomials with a set of given limitations.
+This tool creates N-D polynomials with a set of given limitations. This is
+useful e.g. to ensure a least-squares fit of a function must satisfy some given
+constraints.
 
 ## Building
+
+The only dependency is the C++17 standard library.
 
 ```sh
 cmake -S . -B build
@@ -30,8 +34,7 @@ Pin files are simple text files specifying the polynomial and the constraints pl
 * `resolve <axis>=<value>`: assigns a given value to an `<axis>` (e.g. `x=1`).
 
 There's also comment support, '#' starts a single-line comment.
-
-## Examples
+See examples below on how to use this tool in practice.
 
 ### 3rd degree polynomial
 
