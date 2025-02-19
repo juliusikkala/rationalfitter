@@ -7,14 +7,17 @@
 #include <algorithm>
 #include <variant>
 #include <optional>
+#include <map>
+#include <set>
 
 const char* command_list_format = R"(Command list format:
 '#' starts a comment row and is not parsed.
 
 'domain <degree> <dimension>' initializes the polynomial.
 'pin x=<a> y=<b>' makes the polynomial equal to 'b' at 'a'.
-'printl' prints the current state of the polynomial, splitting each coefficient on a new line.
-'print' prints the current state of the polynomial.
+'print [multiline] [lc]' prints the current state of the polynomial.
+    'multiline' makes it split each term on a new line, and 'lc' reformats the
+    polynomial as a linear combination.
 )";
 
 bool read_text_file(const char* path, std::string& data)
@@ -400,6 +403,26 @@ struct polynomial
         return result;
     }
 
+    polynomial reassign_variable_names() const
+    {
+        polynomial copy = *this;
+        std::map<char, char> old_to_new;
+        for(coefficient& c: copy.coefficients)
+        for(var_weight& w: c.sum)
+            if(w.name)
+                old_to_new[w.name];
+
+        char name_counter = 'a';
+        for(auto& pair: old_to_new)
+            pair.second = name_counter++;
+
+        for(coefficient& c: copy.coefficients)
+        for(var_weight& w: c.sum)
+            if(w.name)
+                w.name = old_to_new[w.name];
+        return copy;
+    }
+
     void print(bool separate_lines)
     {
         bool first = true;
@@ -449,6 +472,92 @@ struct polynomial
         }
         if(first)
             printf("0");
+        printf("\n");
+    }
+
+    void print_linear_combination(bool separate_lines)
+    {
+        std::set<char> vars;
+        for(const coefficient& c: coefficients)
+        for(const var_weight& w: c.sum)
+            if(w.name)
+                vars.insert(w.name);
+
+        bool first = true;
+        for(char var: vars)
+        {
+            if(!first)
+            {
+                if(separate_lines)
+                    printf("\n+ ");
+                else
+                    printf(" + ");
+            }
+            printf("%c * ", var);
+
+            std::string sum;
+            int sum_entries = 0;
+            for(const coefficient& c: coefficients)
+            {
+                std::string term;
+                bool first_d = true;
+                for(unsigned d = 0; d < c.degrees.size(); ++d)
+                {
+                    char letter = 'x' + d;
+                    if(c.degrees[d] == 0)
+                        continue;
+                    if(!first_d)
+                        term += " * ";
+                    first_d = false;
+                    term += letter;
+                    if(c.degrees[d] > 1)
+                        term += "^"+std::to_string(c.degrees[d]);
+                }
+                for(const var_weight& w: c.sum)
+                {
+                    if(w.name == var)
+                    {
+                        float weight = w.weight;
+
+                        if(sum_entries != 0)
+                        {
+                            sum += " ";
+                            if(weight >= 0)
+                                sum += "+ ";
+                            else
+                            {
+                                sum += "- ";
+                                weight = fabs(weight);
+                            }
+                        }
+                        else if(weight < 0)
+                        {
+                            sum += "-";
+                            weight = fabs(weight);
+                        }
+
+                        if(weight != 1 || term.empty())
+                        {
+                            sum += is_integer(weight) ? 
+                                std::to_string(int64_t(weight)) : 
+                                std::to_string(weight);
+                            if(!term.empty())
+                                sum += " * ";
+                        }
+
+                        sum += term;
+                        sum_entries++;
+                    }
+                }
+            }
+
+            if(sum_entries >= 2)
+                printf("(%s)", sum.c_str());
+            else
+                printf("%s", sum.c_str());
+
+            first = false;
+        }
         printf("\n");
     }
 
@@ -563,17 +672,29 @@ int va_sizeof(T&... rest) {return sizeof...(rest);}
     }\
 
 const std::unordered_map<std::string, command_handler> command_handlers = {
-    {"printl", [](polynomial& p, const std::vector<parameter>& parameters)->bool
-    {
-        NO_PARAMS();
-        p.print(true);
-        printf("\n");
-        return true;
-    }},
     {"print", [](polynomial& p, const std::vector<parameter>& parameters)->bool
     {
-        NO_PARAMS();
-        p.print(false);
+        bool linear_combination = false;
+        bool multiline = false;
+        for(const parameter& p: parameters)
+        {
+            if(const std::string* val = std::get_if<std::string>(&p))
+            {
+                if(*val == "lc") linear_combination = true;
+                else if(*val == "multiline") multiline = true;
+            }
+            else
+            {
+                printf("Unrecognized argument\n");
+                return false;
+            }
+        }
+
+        // TODO: linear combination printing
+        if(linear_combination)
+            p.print_linear_combination(multiline);
+        else 
+            p.print(multiline);
         return true;
     }},
     {"domain", [](polynomial& p, const std::vector<parameter>& parameters)->bool
@@ -657,7 +778,14 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return true;
         }
         return false;
-    }}
+    }},
+    {"reassign-names", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {
+        NO_PARAMS();
+
+        p = p.reassign_variable_names();
+        return true;
+    }},
 };
 
 int main(int argc, char** argv)
