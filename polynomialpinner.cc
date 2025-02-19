@@ -368,13 +368,17 @@ struct polynomial
             constrained.coefficients.pop_back();
 
             char replace_name = 0;
+            double replace_weight = 0;
             for(var_weight& w: c.sum)
             {
                 if(w.name > replace_name)
+                {
                     replace_name = w.name;
+                    replace_weight = w.weight;
+                }
             }
 
-            if(replace_name == 0)
+            if(replace_name == 0 || replace_weight == 0)
             {
                 printf("Impossible to pin; no free variables able to achieve this pin are left!\n");
                 return {};
@@ -385,7 +389,7 @@ struct polynomial
             {
                 if(w.name != replace_name)
                 {
-                    w.weight = -w.weight;
+                    w.weight = -w.weight / replace_weight;
                     sum.push_back(w);
                 }
             }
