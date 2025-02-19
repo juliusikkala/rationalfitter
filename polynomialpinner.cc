@@ -13,8 +13,8 @@ const char* command_list_format = R"(Command list format:
 
 'domain <degree> <dimension>' initializes the polynomial.
 'pin x=<a> y=<b>' makes the polynomial equal to 'b' at 'a'.
-'print' prints the current state of the polynomial that always obeys the given
-    pins, with excess variables eliminated.
+'printl' prints the current state of the polynomial, splitting each coefficient on a new line.
+'print' prints the current state of the polynomial.
 )";
 
 bool read_text_file(const char* path, std::string& data)
@@ -559,11 +559,17 @@ int va_sizeof(T&... rest) {return sizeof...(rest);}
     }\
 
 const std::unordered_map<std::string, command_handler> command_handlers = {
-    {"print", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"printl", [](polynomial& p, const std::vector<parameter>& parameters)->bool
     {
         NO_PARAMS();
         p.print(true);
         printf("\n");
+        return true;
+    }},
+    {"print", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {
+        NO_PARAMS();
+        p.print(false);
         return true;
     }},
     {"domain", [](polynomial& p, const std::vector<parameter>& parameters)->bool
