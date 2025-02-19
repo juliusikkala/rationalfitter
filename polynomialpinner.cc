@@ -13,11 +13,14 @@
 const char* command_list_format = R"(Command list format:
 '#' starts a comment row and is not parsed.
 
-'domain <degree> <dimension>' initializes the polynomial.
+'polynomial <degree> <dimensions>' initializes the polynomial.
 'pin x=<a> y=<b>' makes the polynomial equal to 'b' at 'a'.
 'print [multiline] [lc]' prints the current state of the polynomial.
     'multiline' makes it split each term on a new line, and 'lc' reformats the
     polynomial as a linear combination.
+'reassign-names' renames existing variables with successive letters.
+'differentiate <axis>' differentiates the expression along given axis.
+'resolve <axis>=<value>' replaces <axis> from expression using given <value>.
 )";
 
 bool read_text_file(const char* path, std::string& data)
@@ -480,8 +483,7 @@ struct polynomial
         std::set<char> vars;
         for(const coefficient& c: coefficients)
         for(const var_weight& w: c.sum)
-            if(w.name)
-                vars.insert(w.name);
+            vars.insert(w.name);
 
         bool first = true;
         for(char var: vars)
@@ -493,7 +495,8 @@ struct polynomial
                 else
                     printf(" + ");
             }
-            printf("%c * ", var);
+            if(var != 0)
+                printf("%c * ", var);
 
             std::string sum;
             int sum_entries = 0;
@@ -697,7 +700,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             p.print(multiline);
         return true;
     }},
-    {"domain", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"polynomial", [](polynomial& p, const std::vector<parameter>& parameters)->bool
     {
         int degree;
         int dimension;
