@@ -208,6 +208,7 @@ struct polynomial
                 id /= (degree+1);
             }
             c.sum = {{char('a'+i), 1}};
+            if(c.sum[0].name >= 'e') c.sum[0].name++;
             coefficients[i] = c;
         }
     }
@@ -275,15 +276,10 @@ struct polynomial
         {
             coefficient& c = *it;
             double mul = 0;
-            for(int i = 0; i < c.degrees.size(); ++i)
+            if(c.degrees[axis] > 0)
             {
-                if(i != axis)
-                    c.degrees[i] = 0;
-                else if(c.degrees[i] > 0)
-                {
-                    mul = c.degrees[i];
-                    c.degrees[i]--;
-                }
+                mul = c.degrees[axis];
+                c.degrees[axis]--;
             }
             if(mul == 0)
             {
@@ -417,7 +413,10 @@ struct polynomial
 
         char name_counter = 'a';
         for(auto& pair: old_to_new)
+        {
+            if(name_counter == 'e') ++name_counter;
             pair.second = name_counter++;
+        }
 
         for(coefficient& c: copy.coefficients)
         for(var_weight& w: c.sum)
@@ -437,7 +436,7 @@ struct polynomial
             for(unsigned n: degrees)
                 all_zero = all_zero && n == 0;
 
-            if(name == "1" && !all_zero) name = "";
+            //if(name == "1" && !all_zero) name = "";
             if(name == "0" || name.size() == 0) continue;
             if(!first)
             {
@@ -452,7 +451,10 @@ struct polynomial
                     name.erase(name.begin());
                 }
             }
-            printf("%s", name.c_str());
+
+            bool skip_name = name == "1" && !all_zero;
+            if(!skip_name)
+                printf("%s", name.c_str());
 
             std::string term;
             bool first_d = true;
@@ -470,7 +472,11 @@ struct polynomial
             }
 
             if(term.size() > 0)
-                printf(" * %s", term.c_str());
+            {
+                if(!skip_name)
+                    printf(" * ");
+                printf("%s", term.c_str());
+            }
             first = false;
         }
         if(first)
