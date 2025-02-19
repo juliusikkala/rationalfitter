@@ -406,7 +406,12 @@ struct polynomial
         for(unsigned i = 0; i < coefficients.size(); ++i)
         {
             std::string name = coefficient_name(i);
-            if(name == "1") name = "";
+            const std::vector<unsigned>& degrees = coefficients[i].degrees;
+            bool all_zero = true;
+            for(unsigned n: degrees)
+                all_zero = all_zero && n == 0;
+
+            if(name == "1" && !all_zero) name = "";
             if(name == "0" || name.size() == 0) continue;
             if(!first)
             {
@@ -425,7 +430,6 @@ struct polynomial
 
             std::string term;
             bool first_d = true;
-            const std::vector<unsigned>& degrees = coefficients[i].degrees;
             for(unsigned d = 0; d < degrees.size(); ++d)
             {
                 char letter = 'x' + d;
