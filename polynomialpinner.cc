@@ -124,7 +124,7 @@ struct coefficient
 
         for(auto it = sum.begin(); it != sum.end();)
         {
-            if(it->weight == 0)
+            if(fabs(it->weight) < 1e-14)
                 it = sum.erase(it);
             else ++it;
         }
