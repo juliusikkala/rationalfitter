@@ -570,6 +570,137 @@ struct polynomial
         printf("\n");
     }
 
+    void print_numpy()
+    {
+        std::set<char> vars;
+        for(const coefficient& c: coefficients)
+        for(const var_weight& w: c.sum)
+            vars.insert(w.name);
+
+        // We always add the constant offset even if it's not being used.
+        vars.insert(0);
+
+        std::string constant;
+        std::vector<std::string> multipliers;
+        for(char var: vars)
+        {
+            std::string sum;
+            int sum_entries = 0;
+            bool sum_has_axes = false;
+            for(const coefficient& c: coefficients)
+            {
+                std::string term;
+                bool first_d = true;
+                for(unsigned d = 0; d < c.degrees.size(); ++d)
+                {
+                    char letter = 'x' + d;
+                    if(c.degrees[d] == 0)
+                        continue;
+                    if(!first_d)
+                        term += " * ";
+                    first_d = false;
+                    term += letter;
+                    sum_has_axes = true;
+                    if(c.degrees[d] > 1)
+                        term += "**"+std::to_string(c.degrees[d]);
+                }
+                for(const var_weight& w: c.sum)
+                {
+                    if(w.name == var)
+                    {
+                        float weight = w.weight;
+
+                        if(sum_entries != 0)
+                        {
+                            sum += " ";
+                            if(weight >= 0)
+                                sum += "+ ";
+                            else
+                            {
+                                sum += "- ";
+                                weight = fabs(weight);
+                            }
+                        }
+                        else if(weight < 0)
+                        {
+                            sum += "-";
+                            weight = fabs(weight);
+                        }
+
+                        if(weight != 1 || term.empty())
+                        {
+                            sum += is_integer(weight) ? 
+                                std::to_string(int64_t(weight)) : 
+                                std::to_string(weight);
+                            if(!term.empty())
+                                sum += " * ";
+                        }
+
+                        sum += term;
+                        sum_entries++;
+                    }
+                }
+            }
+
+            if(var == 0)
+            {
+                if(sum_has_axes)
+                    constant = "offset = "+sum;
+                else if(sum_entries != 0)
+                    constant = "offset = np.ones(x.shape) * ("+sum+")";
+                else
+                    constant = "offset = np.zeros(x.shape)";
+            }
+            else
+            {
+                multipliers.push_back(sum + " # " + var);
+            }
+        }
+
+        std::string multipliers_str;
+        for(unsigned i = 0; i < multipliers.size(); ++i)
+        {
+            if(i != 0)
+                multipliers_str += "        , ";
+            else
+                multipliers_str += "        ";
+            multipliers_str += multipliers[i] + "\n";
+        }
+
+        std::string params;
+        std::string flats;
+        for(unsigned i = 0; i <= output_axis; ++i)
+        {
+            if(i != 0)
+                params += ", ";
+            params += ('X' + i);
+            flats += "    ";
+            flats += ('x' + i);
+            flats += " = ";
+            flats += ('X' + i);
+            flats += ".flatten()\n";
+        }
+
+        printf(R"(import numpy as np
+
+def fit(%s):
+%s
+    %s
+    b = %c - offset
+    A = np.array([
+%s    ]).T
+    coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+    out = (np.dot(A, coeff) + offset).reshape(X.shape)
+    return (coeff, out)
+)",
+            params.c_str(),
+            flats.c_str(),
+            constant.c_str(),
+            'x'+output_axis,
+            multipliers_str.c_str()
+        );
+    }
+
     unsigned output_axis;
     std::vector<coefficient> coefficients;
 };
@@ -685,12 +816,14 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
     {
         bool linear_combination = false;
         bool multiline = false;
+        bool numpy = false;
         for(const parameter& p: parameters)
         {
             if(const std::string* val = std::get_if<std::string>(&p))
             {
                 if(*val == "lc") linear_combination = true;
                 else if(*val == "multiline") multiline = true;
+                else if(*val == "numpy") numpy = true;
             }
             else
             {
@@ -699,8 +832,9 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             }
         }
 
-        // TODO: linear combination printing
-        if(linear_combination)
+        if(numpy)
+            p.print_numpy();
+        else if(linear_combination)
             p.print_linear_combination(multiline);
         else 
             p.print(multiline);
