@@ -20,7 +20,7 @@ const char* command_list_format = R"(Command list format:
     polynomial as a linear combination.
 'reassign-names' renames existing variables with successive letters.
 'differentiate <axis>' differentiates the expression along given axis.
-'resolve <axis>=<value>' replaces <axis> from expression using given <value>.
+'let <axis>=<value>' replaces <axis> from expression using given <value>.
 )";
 
 bool read_text_file(const char* path, std::string& data)
@@ -172,8 +172,8 @@ struct polynomial
 
             if(weight != 1 || !var.name)
             {
-                form += is_integer(weight) ? 
-                    std::to_string(int64_t(weight)) : 
+                form += is_integer(weight) ?
+                    std::to_string(int64_t(weight)) :
                     std::to_string(weight);
                 if(var.name)
                     form += " * ";
@@ -238,33 +238,49 @@ struct polynomial
         return copy;
     }
 
-    polynomial resolve(int axis, double at) const
+    polynomial let(char name, double at) const
     {
         polynomial copy = *this;
 
-        for(auto it = copy.coefficients.begin(); it != copy.coefficients.end();)
+        if(name >= 'x')
         {
-            coefficient& c = *it;
-            double mul = 1;
-            for(int i = 0; i < c.degrees[axis]; ++i)
-                mul *= at;
-
-            c.degrees[axis] = 0;
-            if(mul == 0)
+            int axis = name - 'x';
+            if(axis >= output_axis)
             {
-                it = copy.coefficients.erase(it);
-                continue;
+                printf("Axis %c out of range for polynomial\n", name);
+                return copy;
             }
-            else if(mul != 1)
+            for(auto it = copy.coefficients.begin(); it != copy.coefficients.end();)
             {
-                for(var_weight& w: c.sum)
+                coefficient& c = *it;
+                double mul = 1;
+                for(int i = 0; i < c.degrees[axis]; ++i)
+                    mul *= at;
+
+                c.degrees[axis] = 0;
+                if(mul == 0)
                 {
+                    it = copy.coefficients.erase(it);
+                    continue;
+                }
+                for(var_weight& w: c.sum)
                     w.weight *= mul;
+                ++it;
+            }
+        }
+        else
+        {
+            for(coefficient& c: copy.coefficients)
+            for(var_weight& w: c.sum)
+            {
+                if(w.name == name)
+                {
+                    w.name = 0;
+                    w.weight *= at;
                 }
             }
-            ++it;
         }
-        
+
         return copy.regroup();
     }
 
@@ -293,7 +309,7 @@ struct polynomial
             }
             ++it;
         }
-        
+
         return copy.regroup();
     }
 
@@ -354,7 +370,7 @@ struct polynomial
             constrained = constrained.differentiate(output_constraint.axis);
 
         for(const pin_constraint& pc: input_constraints)
-            constrained = constrained.resolve(pc.axis, pc.value);
+            constrained = constrained.let('x'+pc.axis, pc.value);
 
         constrained.coefficients.push_back(
             coefficient{std::vector<unsigned>(output_axis, 0), {{0, -output_constraint.value}}}
@@ -436,7 +452,6 @@ struct polynomial
             for(unsigned n: degrees)
                 all_zero = all_zero && n == 0;
 
-            //if(name == "1" && !all_zero) name = "";
             if(name == "0" || name.size() == 0) continue;
             if(!first)
             {
@@ -547,8 +562,8 @@ struct polynomial
 
                         if(weight != 1 || term.empty())
                         {
-                            sum += is_integer(weight) ? 
-                                std::to_string(int64_t(weight)) : 
+                            sum += is_integer(weight) ?
+                                std::to_string(int64_t(weight)) :
                                 std::to_string(weight);
                             if(!term.empty())
                                 sum += " * ";
@@ -568,6 +583,99 @@ struct polynomial
             first = false;
         }
         printf("\n");
+    }
+
+    void print_c()
+    {
+        std::set<char> vars;
+        for(const coefficient& c: coefficients)
+        for(const var_weight& w: c.sum)
+            vars.insert(w.name);
+
+        printf("float func(");
+        std::vector<unsigned> max_degrees(output_axis, 0);
+        for(const coefficient& c: coefficients)
+        {
+            for(unsigned i = 0; i < max_degrees.size(); ++i)
+                max_degrees[i] = max_degrees[i] > c.degrees[i] ? max_degrees[i] : c.degrees[i];
+        }
+
+        bool first_param = true;
+        for(unsigned i = 0; i < max_degrees.size(); ++i)
+        {
+            if(max_degrees[i] > 0)
+            {
+                if(!first_param) printf(", ");
+                printf("float %c", 'x'+i);
+                first_param = false;
+            }
+        }
+
+        for(char var: vars)
+        {
+            if(var != 0)
+            {
+                if(!first_param) printf(", ");
+                printf("float %c", var);
+                first_param = false;
+            }
+        }
+        printf(")\n{\n");
+        for(unsigned i = 0; i < max_degrees.size(); ++i)
+        {
+            int degree = max_degrees[i];
+            char name = 'x'+i;
+            std::string prevname(1, name);
+            for(unsigned j = 2; j < degree; ++j)
+            {
+                std::string dname(1, name);
+                dname += std::to_string(j);
+                printf("    float %s = %s * %c;\n", dname.c_str(), prevname.c_str(), name);
+                prevname = dname;
+            }
+        }
+
+        printf("    float res = 0;\n");
+        for(unsigned i = 0; i < coefficients.size(); ++i)
+        {
+            const std::vector<unsigned>& degrees = coefficients[i].degrees;
+
+            std::string name = coefficient_name(i);
+            std::string term;
+            bool first_d = true;
+            for(unsigned d = 0; d < degrees.size(); ++d)
+            {
+                char letter = 'x' + d;
+                if(degrees[d] == 0)
+                    continue;
+                if(!first_d)
+                    term += " * ";
+                first_d = false;
+                term += letter;
+                if(degrees[d] > 1)
+                    term += std::to_string(degrees[d]);
+            }
+            if(name[0] == '-')
+            {
+                printf("    res -= ");
+                name.erase(name.begin());
+            }
+            else
+            {
+                printf("    res += ");
+            }
+            bool skip_name = name == "1" && !term.empty();
+            if(!skip_name)
+                printf("%s", name.c_str());
+            if(term.size() > 0)
+            {
+                if(!skip_name)
+                    printf(" * ");
+                printf("%s", term.c_str());
+            }
+            printf(";\n");
+        }
+        printf("    return res;\n}\n");
     }
 
     void print_numpy()
@@ -600,7 +708,6 @@ struct polynomial
                         term += " * ";
                     first_d = false;
                     term += letter;
-                    sum_has_axes = true;
                     if(c.degrees[d] > 1)
                         term += "**"+std::to_string(c.degrees[d]);
                 }
@@ -629,12 +736,15 @@ struct polynomial
 
                         if(weight != 1 || term.empty())
                         {
-                            sum += is_integer(weight) ? 
-                                std::to_string(int64_t(weight)) : 
+                            sum += is_integer(weight) ?
+                                std::to_string(int64_t(weight)) :
                                 std::to_string(weight);
                             if(!term.empty())
                                 sum += " * ";
                         }
+
+                        if(!term.empty())
+                            sum_has_axes = true;
 
                         sum += term;
                         sum_entries++;
@@ -817,6 +927,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         bool linear_combination = false;
         bool multiline = false;
         bool numpy = false;
+        bool c_code = false;
         for(const parameter& p: parameters)
         {
             if(const std::string* val = std::get_if<std::string>(&p))
@@ -824,6 +935,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 if(*val == "lc") linear_combination = true;
                 else if(*val == "multiline") multiline = true;
                 else if(*val == "numpy") numpy = true;
+                else if(*val == "c") c_code = true;
             }
             else
             {
@@ -832,11 +944,13 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             }
         }
 
-        if(numpy)
+        if(c_code)
+            p.print_c();
+        else if(numpy)
             p.print_numpy();
         else if(linear_combination)
             p.print_linear_combination(multiline);
-        else 
+        else
             p.print(multiline);
         return true;
     }},
@@ -858,23 +972,17 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         p.reset(degree, dimension);
         return true;
     }},
-    {"resolve", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"let", [](polynomial& p, const std::vector<parameter>& parameters)->bool
     {
         std::string label;
         double value;
         PARAMS(label, value);
-        pin_constraint pc;
-        if(!pin_constraint::create(label.c_str(), value, pc))
+        if(label.size() != 1)
         {
-            printf("Unrecognized resolve axis %s\n", label.c_str());
+            printf("Variable name must be a single letter!\n");
             return false;
         }
-        if(pc.derivative)
-        {
-            printf("Derivatives are not resolvable yet\n");
-            return false;
-        }
-        p = p.resolve(pc.axis, pc.value);
+        p = p.let(label[0], value);
         return true;
     }},
     {"differentiate", [](polynomial& p, const std::vector<parameter>& parameters)->bool

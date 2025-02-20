@@ -28,10 +28,10 @@ Pin files are simple text files specifying the polynomial and the constraints pl
 
 * `polynomial <degree> <dimensions>`: start with a polynomial of `<degree>` and number of `<dimensions>`s. E.g. `polynomial 3 2` creates a 3rd degree polynomial over `x` and `y`.
 * `pin <in-axis>=<value> <out-axis>=<value>`: ensure the polynomial has a specific value at a given point. For a 2D polynomial, `<in-axis>` is either `x` or `y`, and `<out-axis>` can be `z`, `dx` or `dy`. You may specify multiple in-axes, `pin x=0 y=0 z=2` is valid for a 2D polynomial.
-* `print`: prints the current state of the polynomial. `print multiline` splits each term on a new line, and `print lc` factors variables first. `print numpy` prints fitting code for use with Python & Numpy.
+* `print`: prints the current state of the polynomial. `print multiline` splits each term on a new line, and `print lc` factors variables first. `print numpy` prints fitting code for use with Python & Numpy. `print c` prints C code that computes the fit.
 * `reassign-names`: renames existing variables with successive letters.
 * `differentiate <axis>`: differentiates the polynomial over given axis.
-* `resolve <axis>=<value>`: assigns a given value to an `<axis>` (e.g. `x=1`).
+* `let <axis>=<value>`: assigns a given value to an `<axis>` (e.g. `x=1`).
 
 There's also comment support, '#' starts a single-line comment.
 See examples below on how to use this tool in practice.
