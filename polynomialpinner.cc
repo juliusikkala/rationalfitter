@@ -626,7 +626,7 @@ struct polynomial
             int degree = max_degrees[i];
             char name = 'x'+i;
             std::string prevname(1, name);
-            for(unsigned j = 2; j < degree; ++j)
+            for(unsigned j = 2; j <= degree; ++j)
             {
                 std::string dname(1, name);
                 dname += std::to_string(j);
