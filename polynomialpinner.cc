@@ -1,27 +1,34 @@
+#include "polynomial.hh"
 #include <cstdio>
 #include <vector>
 #include <cmath>
 #include <string>
 #include <cstring>
 #include <functional>
-#include <algorithm>
 #include <variant>
-#include <optional>
 #include <map>
 #include <set>
 
 const char* command_list_format = R"(Command list format:
 '#' starts a comment row and is not parsed.
 
-'polynomial <degree> <dimensions>' initializes the polynomial.
+'polynomial <degree> <in-axes> <out-axis>' initializes a polynomial.
 'pin x=<a> y=<b>' makes the polynomial equal to 'b' at 'a'.
 'print [multiline] [lc]' prints the current state of the polynomial.
     'multiline' makes it split each term on a new line, and 'lc' reformats the
     polynomial as a linear combination.
-'reassign-names' renames existing variables with successive letters.
 'differentiate <axis>' differentiates the expression along given axis.
 'let <axis>=<value>' replaces <axis> from expression using given <value>.
 )";
+
+struct context
+{
+    std::map<variable, std::string> var_names;
+    std::map<std::string, variable> name_vars;
+    std::vector<variable> axes;
+    std::vector<variable> coefficients;
+    polynomial p;
+};
 
 bool read_text_file(const char* path, std::string& data)
 {
@@ -44,380 +51,14 @@ bool read_text_file(const char* path, std::string& data)
     return true;
 }
 
-int get_axis(const char* label)
-{
-    int axis;
-    switch(*label)
-    {
-    case 'x':
-    case 'X':
-        axis = 0;
-        break;
-    case 'y':
-    case 'Y':
-        axis = 1;
-        break;
-    case 'z':
-    case 'Z':
-        axis = 2;
-        break;
-    case 'w':
-    case 'W':
-        axis = 3;
-        break;
-    default:
-        return -1;
-    }
-    label++;
-    return *label == 0 ? axis : -1;
-}
-
 bool is_integer(double d)
 {
     return d == double(int64_t(d));
 }
 
-struct pin_constraint
-{
-    static bool create(
-        const char* label,
-        double value,
-        pin_constraint& constraint
-    ){
-        constraint.derivative = false;
-        constraint.value = value;
-        if(*label == 'd')
-        {
-            constraint.derivative = true;
-            label++;
-        }
-        if(!*label) return false;
-        constraint.axis = get_axis(label);
-        return constraint.axis >= 0;
-    }
-
-    int axis;
-    bool derivative;
-    double value;
-};
-
-struct coefficient;
-struct var_weight
-{
-    char name; // 0 is a special variable marking constant values.
-    double weight;
-};
-
-struct coefficient
-{
-    std::vector<unsigned> degrees;
-    std::vector<var_weight> sum;
-
-    void regroup()
-    {
-        for(unsigned i = 0; i < sum.size(); ++i)
-        for(unsigned j = i+1; j < sum.size();)
-        {
-            var_weight& parent = sum[i];
-            var_weight& child = sum[j];
-            if(parent.name == child.name)
-            {
-                parent.weight += child.weight;
-                sum.erase(sum.begin()+j);
-            }
-            else ++j;
-        }
-
-        for(auto it = sum.begin(); it != sum.end();)
-        {
-            if(fabs(it->weight) < 1e-14)
-                it = sum.erase(it);
-            else ++it;
-        }
-    }
-};
-
+/*
 struct polynomial
 {
-    std::string coefficient_name(unsigned i) const
-    {
-        const coefficient& coef = coefficients[i];
-        // Pinned!
-        std::string form;
-        if(coef.sum.size() > 1)
-            form = "(";
-
-        bool first = true;
-        for(const var_weight& var: coef.sum)
-        {
-            float weight = var.weight;
-            if(weight == 0 && coef.sum.size() > 1)
-                continue; // '0'
-            if(!first)
-            {
-                form += " ";
-                if(weight >= 0)
-                    form += "+ ";
-                else
-                {
-                    form += "- ";
-                    weight = fabs(var.weight);
-                }
-            }
-            else if(weight < 0)
-            {
-                form += "-";
-                weight = fabs(var.weight);
-            }
-
-            if(weight != 1 || !var.name)
-            {
-                form += is_integer(weight) ?
-                    std::to_string(int64_t(weight)) :
-                    std::to_string(weight);
-                if(var.name)
-                    form += " * ";
-            }
-
-            if(var.name)
-                form += std::string(1, var.name);
-
-            first = false;
-        }
-
-        if(coef.sum.size() > 1)
-            form += ")";
-        return form;
-    }
-
-    void reset(unsigned degree, unsigned dimension)
-    {
-        output_axis = dimension;
-        unsigned count = 1;
-        for(unsigned i = 0; i < dimension; ++i)
-            count *= (degree+1);
-        coefficients.resize(count);
-        for(unsigned i = 0; i < coefficients.size(); ++i)
-        {
-            coefficient c;
-            c.degrees.resize(dimension);
-            unsigned id = i;
-            for(int d = 0; d < dimension; ++d)
-            {
-                c.degrees[d] = id % (degree+1);
-                id /= (degree+1);
-            }
-            c.sum = {{char('a'+i), 1}};
-            if(c.sum[0].name >= 'e') c.sum[0].name++;
-            coefficients[i] = c;
-        }
-    }
-
-    polynomial regroup() const
-    {
-        polynomial copy = *this;
-        for(unsigned i = 0; i < copy.coefficients.size(); ++i)
-        for(unsigned j = i+1; j < copy.coefficients.size();)
-        {
-            coefficient& parent = copy.coefficients[i];
-            coefficient& child = copy.coefficients[j];
-            if(parent.degrees == child.degrees)
-            {
-                parent.sum.insert(parent.sum.end(), child.sum.begin(), child.sum.end());
-                copy.coefficients.erase(copy.coefficients.begin()+j);
-            }
-            else ++j;
-        }
-        for(auto it = copy.coefficients.begin(); it != copy.coefficients.end();)
-        {
-            it->regroup();
-            if(it->sum.size() == 0)
-                it = copy.coefficients.erase(it);
-            else ++it;
-        }
-        return copy;
-    }
-
-    polynomial let(char name, double at) const
-    {
-        polynomial copy = *this;
-
-        if(name >= 'x')
-        {
-            int axis = name - 'x';
-            if(axis >= output_axis)
-            {
-                printf("Axis %c out of range for polynomial\n", name);
-                return copy;
-            }
-            for(auto it = copy.coefficients.begin(); it != copy.coefficients.end();)
-            {
-                coefficient& c = *it;
-                double mul = 1;
-                for(int i = 0; i < c.degrees[axis]; ++i)
-                    mul *= at;
-
-                c.degrees[axis] = 0;
-                if(mul == 0)
-                {
-                    it = copy.coefficients.erase(it);
-                    continue;
-                }
-                for(var_weight& w: c.sum)
-                    w.weight *= mul;
-                ++it;
-            }
-        }
-        else
-        {
-            for(coefficient& c: copy.coefficients)
-            for(var_weight& w: c.sum)
-            {
-                if(w.name == name)
-                {
-                    w.name = 0;
-                    w.weight *= at;
-                }
-            }
-        }
-
-        return copy.regroup();
-    }
-
-    polynomial differentiate(int axis) const
-    {
-        polynomial copy = *this;
-
-        for(auto it = copy.coefficients.begin(); it != copy.coefficients.end();)
-        {
-            coefficient& c = *it;
-            double mul = 0;
-            if(c.degrees[axis] > 0)
-            {
-                mul = c.degrees[axis];
-                c.degrees[axis]--;
-            }
-            if(mul == 0)
-            {
-                it = copy.coefficients.erase(it);
-                continue;
-            }
-            else if(mul != 1)
-            {
-                for(var_weight& w: c.sum)
-                    w.weight *= mul;
-            }
-            ++it;
-        }
-
-        return copy.regroup();
-    }
-
-    polynomial replace(char name, const std::vector<var_weight>& sum) const
-    {
-        polynomial copy = *this;
-
-        for(coefficient& c: copy.coefficients)
-        {
-            double weight = 0;
-            for(auto it = c.sum.begin(); it != c.sum.end(); )
-            {
-                if(it->name == name)
-                {
-                    weight += it->weight;
-                    it = c.sum.erase(it);
-                }
-                else ++it;
-            }
-
-            if(weight != 0)
-            {
-                for(const var_weight& w: sum)
-                    c.sum.push_back({w.name, weight * w.weight});
-            }
-        }
-
-        return copy.regroup();
-    }
-
-    std::optional<polynomial> pin(const std::vector<pin_constraint>& constraints) const
-    {
-        std::vector<pin_constraint> output_constraints;
-        std::vector<pin_constraint> input_constraints;
-        for(const pin_constraint& pc: constraints)
-        {
-            if(pc.derivative || pc.axis == output_axis)
-                output_constraints.push_back(pc);
-            else
-                input_constraints.push_back(pc);
-        }
-
-        if(output_constraints.size() == 0)
-        {
-            printf("No output constraint in pin!\n");
-            return {};
-        }
-
-        if(output_constraints.size() > 1)
-        {
-            printf("Multiple output constraints in pin!\n");
-            return {};
-        }
-        pin_constraint& output_constraint = output_constraints[0];
-
-        polynomial constrained = *this;
-        if(output_constraint.derivative)
-            constrained = constrained.differentiate(output_constraint.axis);
-
-        for(const pin_constraint& pc: input_constraints)
-            constrained = constrained.let('x'+pc.axis, pc.value);
-
-        constrained.coefficients.push_back(
-            coefficient{std::vector<unsigned>(output_axis, 0), {{0, -output_constraint.value}}}
-        );
-        constrained = constrained.regroup();
-
-        polynomial result = *this;
-
-        // Go over all coefficients of the constraint and a way to make them zero.
-        while(constrained.coefficients.size() != 0)
-        {
-            coefficient c = constrained.coefficients.back();
-            constrained.coefficients.pop_back();
-
-            char replace_name = 0;
-            double replace_weight = 0;
-            for(var_weight& w: c.sum)
-            {
-                if(w.name > replace_name)
-                {
-                    replace_name = w.name;
-                    replace_weight = w.weight;
-                }
-            }
-
-            if(replace_name == 0 || replace_weight == 0)
-            {
-                printf("Impossible to pin; no free variables able to achieve this pin are left!\n");
-                return {};
-            }
-
-            std::vector<var_weight> sum;
-            for(var_weight& w: c.sum)
-            {
-                if(w.name != replace_name)
-                {
-                    w.weight = -w.weight / replace_weight;
-                    sum.push_back(w);
-                }
-            }
-
-            result = result.replace(replace_name, sum);
-            constrained = constrained.replace(replace_name, sum);
-        }
-        return result;
-    }
-
     polynomial reassign_variable_names() const
     {
         polynomial copy = *this;
@@ -439,150 +80,6 @@ struct polynomial
             if(w.name)
                 w.name = old_to_new[w.name];
         return copy;
-    }
-
-    void print(bool separate_lines)
-    {
-        bool first = true;
-        for(unsigned i = 0; i < coefficients.size(); ++i)
-        {
-            std::string name = coefficient_name(i);
-            const std::vector<unsigned>& degrees = coefficients[i].degrees;
-            bool all_zero = true;
-            for(unsigned n: degrees)
-                all_zero = all_zero && n == 0;
-
-            if(name == "0" || name.size() == 0) continue;
-            if(!first)
-            {
-                if(separate_lines)
-                    printf("\n");
-                else printf(" ");
-                if(name[0] != '-')
-                    printf("+ ");
-                else
-                {
-                    printf("- ");
-                    name.erase(name.begin());
-                }
-            }
-
-            bool skip_name = name == "1" && !all_zero;
-            if(!skip_name)
-                printf("%s", name.c_str());
-
-            std::string term;
-            bool first_d = true;
-            for(unsigned d = 0; d < degrees.size(); ++d)
-            {
-                char letter = 'x' + d;
-                if(degrees[d] == 0)
-                    continue;
-                if(!first_d)
-                    term += " * ";
-                first_d = false;
-                term += letter;
-                if(degrees[d] > 1)
-                    term += "^"+std::to_string(degrees[d]);
-            }
-
-            if(term.size() > 0)
-            {
-                if(!skip_name)
-                    printf(" * ");
-                printf("%s", term.c_str());
-            }
-            first = false;
-        }
-        if(first)
-            printf("0");
-        printf("\n");
-    }
-
-    void print_linear_combination(bool separate_lines)
-    {
-        std::set<char> vars;
-        for(const coefficient& c: coefficients)
-        for(const var_weight& w: c.sum)
-            vars.insert(w.name);
-
-        bool first = true;
-        for(char var: vars)
-        {
-            if(!first)
-            {
-                if(separate_lines)
-                    printf("\n+ ");
-                else
-                    printf(" + ");
-            }
-            if(var != 0)
-                printf("%c * ", var);
-
-            std::string sum;
-            int sum_entries = 0;
-            for(const coefficient& c: coefficients)
-            {
-                std::string term;
-                bool first_d = true;
-                for(unsigned d = 0; d < c.degrees.size(); ++d)
-                {
-                    char letter = 'x' + d;
-                    if(c.degrees[d] == 0)
-                        continue;
-                    if(!first_d)
-                        term += " * ";
-                    first_d = false;
-                    term += letter;
-                    if(c.degrees[d] > 1)
-                        term += "^"+std::to_string(c.degrees[d]);
-                }
-                for(const var_weight& w: c.sum)
-                {
-                    if(w.name == var)
-                    {
-                        float weight = w.weight;
-
-                        if(sum_entries != 0)
-                        {
-                            sum += " ";
-                            if(weight >= 0)
-                                sum += "+ ";
-                            else
-                            {
-                                sum += "- ";
-                                weight = fabs(weight);
-                            }
-                        }
-                        else if(weight < 0)
-                        {
-                            sum += "-";
-                            weight = fabs(weight);
-                        }
-
-                        if(weight != 1 || term.empty())
-                        {
-                            sum += is_integer(weight) ?
-                                std::to_string(int64_t(weight)) :
-                                std::to_string(weight);
-                            if(!term.empty())
-                                sum += " * ";
-                        }
-
-                        sum += term;
-                        sum_entries++;
-                    }
-                }
-            }
-
-            if(sum_entries >= 2)
-                printf("(%s)", sum.c_str());
-            else
-                printf("%s", sum.c_str());
-
-            first = false;
-        }
-        printf("\n");
     }
 
     void print_c()
@@ -814,6 +311,133 @@ def fit(%s):
     unsigned output_axis;
     std::vector<coefficient> coefficients;
 };
+*/
+std::string polynomial_to_string(
+    context& ctx,
+    const polynomial& p,
+    bool group_by_axes,
+    bool multiline,
+    const char* pow_symbol = "^"
+);
+
+std::string term_to_string(
+    context& ctx,
+    const term& t,
+    const char* pow_symbol
+){
+    if(t.coefficient == 0)
+        return "0";
+
+    float coefficient = fabs(t.coefficient);
+
+    std::string ret = t.coefficient < 0 ? "- " : "";
+    bool show_coefficient = false;
+    if(coefficient != 1 || t.mul.size() == 0)
+    {
+        ret += is_integer(coefficient) ? 
+            std::to_string(int64_t(coefficient)) :
+            std::to_string(coefficient);
+        show_coefficient = true;
+    }
+
+    for(size_t i = 0; i < t.mul.size(); ++i)
+    {
+        if(i != 0 || show_coefficient)
+            ret += " * ";
+        const var_power& vp = t.mul[i];
+        if(vp.roots.has_value())
+        {
+            ret += "roots(" + polynomial_to_string(ctx, vp.roots->expr, true, false, pow_symbol) + ", " + ctx.var_names[vp.roots->var] + ")";
+        }
+        else
+        {
+            ret += ctx.var_names[vp.id];
+        }
+        if(vp.degree != 1)
+        {
+            ret += pow_symbol;
+            ret += std::to_string(vp.degree);
+        }
+    }
+
+    return ret;
+}
+
+std::string polynomial_to_string(
+    context& ctx,
+    const polynomial& p,
+    bool group_by_axes,
+    bool multiline,
+    const char* pow_symbol
+){
+    if(p.terms.size() == 0)
+        return "0";
+
+    std::vector<variable>& indeterminates = group_by_axes ? ctx.axes : ctx.coefficients;
+    std::map<indeterminate_group, polynomial> groups = 
+        group_by_indeterminates(p, indeterminates.data(), indeterminates.size());
+
+    bool first_line = true;
+    std::string polynomial_string;
+    for(auto& [group, poly]: groups)
+    {
+        std::string poly_string;
+        bool first = true;
+        for(const term& t: poly.terms)
+        {
+            std::string tstr = term_to_string(ctx, t, pow_symbol);
+            if(tstr.empty())
+                continue;
+
+            if(!first)
+            {
+                if(tstr[0] == '-')
+                    poly_string += " ";
+                else
+                    poly_string += " + ";
+            }
+
+            poly_string += tstr;
+            first = false;
+        }
+
+        term indeterminate_term;
+        indeterminate_term.coefficient = 1;
+        indeterminate_term.mul = group.indeterminates;
+        std::string indeterminate_string = term_to_string(ctx, indeterminate_term, pow_symbol);
+
+        bool implicit_coefficient = false;
+        if(poly.terms.size() > 1)
+        {
+            poly_string = "(" + poly_string + ")";
+        }
+
+        std::string joined_string;
+        if(indeterminate_string == "1")
+            joined_string = poly_string;
+        else
+        {
+            if(poly_string == "- 1")
+                joined_string = "- " + indeterminate_string;
+            else if(poly_string == "1")
+                joined_string = indeterminate_string;
+            else joined_string = poly_string + " * " + indeterminate_string;
+        }
+
+        if(joined_string == "0" || joined_string.empty())
+            continue;
+
+        if(!first_line)
+        {
+            if(joined_string[0] == '-')
+                polynomial_string += multiline ? "\n" : " ";
+            else polynomial_string += multiline ? "\n+ " : " + ";
+        }
+        polynomial_string += joined_string;
+        first_line = false;
+    }
+    return polynomial_string;
+}
 
 void skip_whitespace(const char*& str)
 {
@@ -849,7 +473,6 @@ std::string read_token(const char*& str)
 }
 
 using parameter = std::variant<std::string, double>;
-using command_handler = std::function<bool(polynomial&, const std::vector<parameter>& parameters)>;
 
 int get_params(const parameter* parameters, size_t param_count)
 {
@@ -884,6 +507,16 @@ int get_params(const parameter* parameters, size_t param_count, U& first, T&... 
         if(const std::string* val = std::get_if<std::string>(parameters))
             first = *val;
         else return 2; // Argument type mismatch.
+    }
+    else if constexpr(std::is_same_v<U, std::vector<std::string>>)
+    {
+        for(size_t i = 0; i < param_count; ++i)
+        {
+            if(const std::string* val = std::get_if<std::string>(parameters+i))
+                first.push_back(*val);
+            else return 2; // Argument type mismatch.
+        }
+        return get_params(nullptr, 0, rest...);
     }
     else if constexpr(std::is_same_v<U, parameter>)
     {
@@ -921,8 +554,10 @@ int va_sizeof(T&... rest) {return sizeof...(rest);}
         }\
     }\
 
+using command_handler = std::function<bool(context&, const std::vector<parameter>& parameters)>;
+
 const std::unordered_map<std::string, command_handler> command_handlers = {
-    {"print", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"print", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
         bool linear_combination = false;
         bool multiline = false;
@@ -943,66 +578,133 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 return false;
             }
         }
-
+        /*
         if(c_code)
             p.print_c();
         else if(numpy)
             p.print_numpy();
-        else if(linear_combination)
-            p.print_linear_combination(multiline);
-        else
-            p.print(multiline);
+            */
+
+        std::string str = polynomial_to_string(
+            ctx,
+            ctx.p,
+            !linear_combination,
+            multiline,
+            "^"
+        );
+        printf("%s\n", str.c_str());
         return true;
     }},
-    {"polynomial", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"polynomial", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
         int degree;
-        int dimension;
-        PARAMS(degree, dimension);
+        std::vector<std::string> axis_names;
+        PARAMS(degree, axis_names);
         if(degree < 0)
         {
             printf("Degree must be a positive integer!\n");
             return false;
         }
+
+        int dimension = axis_names.size()-1;
         if(dimension < 0 || dimension > 4)
         {
             printf("Currently, only dimensions [0, 4] are supported.\n");
             return false;
         }
-        p.reset(degree, dimension);
+        ctx.axes.clear();
+        ctx.coefficients.clear();
+        ctx.var_names.clear();
+        ctx.name_vars.clear();
+        for(size_t i = 0; i < axis_names.size(); ++i)
+        {
+            variable id = (1<<20)+i;
+            ctx.axes.push_back(id);
+            ctx.var_names[id] = axis_names[i];
+            if(ctx.name_vars.count(axis_names[i]))
+            {
+                printf("Axis names must be unique.\n");
+                return false;
+            }
+            ctx.name_vars[axis_names[i]] = id;
+        }
+
+        variable var_counter = 0;
+        ctx.p = polynomial::create(ctx.axes.data(), dimension, degree, var_counter);
+        bool alphabet_names = var_counter < 'z'-'a'-axis_names.size();
+        char alphabet_counter = 'a';
+        for(variable i = 0; i < var_counter; ++i)
+        {
+            std::string name;
+            if(alphabet_names)
+            {
+                // Skip 'e' for desmos compatibility :D
+                while(ctx.name_vars.count(std::string(1, alphabet_counter)) || alphabet_counter == 'e')
+                    alphabet_counter++;
+                name = std::string(1, alphabet_counter++);
+            }
+            else
+            {
+                name = "c"+std::to_string(i);
+            }
+
+            ctx.name_vars[name] = i;
+            ctx.var_names[i] = name;
+            ctx.coefficients.push_back(i);
+        }
         return true;
     }},
-    {"let", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"let", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
-        std::string label;
+        std::string name;
         double value;
-        PARAMS(label, value);
-        if(label.size() != 1)
+        PARAMS(name, value);
+        if(!ctx.name_vars.count(name))
         {
-            printf("Variable name must be a single letter!\n");
+            printf("No such variable: %s\n", name.c_str());
             return false;
         }
-        p = p.let(label[0], value);
+        variable id = ctx.name_vars[name];
+        ctx.p = assign(ctx.p, id, value);
         return true;
     }},
-    {"differentiate", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"differentiate", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
-        std::string label;
-        PARAMS(label);
+        std::string name;
+        PARAMS(name);
 
-        int axis = get_axis(label.c_str());
-
-        if(axis < 0)
+        if(!ctx.name_vars.count(name))
         {
-            printf("Unrecognized differentiation axis %s\n", label.c_str());
+            printf("No such variable: %s\n", name.c_str());
             return false;
         }
-        p = p.differentiate(axis);
+        variable id = ctx.name_vars[name];
+        std::optional<polynomial> result = differentiate(ctx.p, id);
+        if(!result.has_value())
+        {
+            printf("Differentiation failed for polynomial %s\n", polynomial_to_string(ctx, ctx.p, true, false).c_str());
+            return false;
+        }
+        ctx.p = *result;
         return true;
     }},
-    {"pin", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"pin", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
-        std::vector<pin_constraint> constraints;
+        struct input_constraint
+        {
+            double value;
+            variable id;
+        };
+        struct output_constraint
+        {
+            double value;
+            int derivative;
+            variable id;
+        };
+        std::vector<input_constraint> input_constraints;
+        std::vector<output_constraint> output_constraints;
+
+        std::string output_axis_name = ctx.var_names[ctx.axes.back()];
         for(int i = 0; i < parameters.size(); i+=2)
         {
             std::string label;
@@ -1010,26 +712,72 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             int res = get_params(parameters.data()+i, std::min(parameters.size()-i, 2lu), label, value);
             if(res != 0)
             {
-                printf("Pin parameters must be in the format [d]<axis>=<value>.\n");
+                printf("Pin parameters must be in the format [']<axis>=<value>.\n");
                 return false;
             }
 
-            pin_constraint pc;
-            if(!pin_constraint::create(label.c_str(), value, pc))
+            const char* name = label.c_str();
+            if(*name == '\'' || label == output_axis_name)
             {
-                printf("Unrecognized pin constraint axis %s\n", label.c_str());
+                output_constraint oc;
+                oc.value = value;
+                oc.derivative = 0;
+                while(*name == '\'')
+                {
+                    oc.derivative++;
+                    name++;
+                }
+                if(!ctx.name_vars.count(name))
+                {
+                    printf("Can't differentiate over unknown variable %s!\n", name);
+                    return false;
+                }
+                oc.id = ctx.name_vars[name];
+                output_constraints.push_back(oc);
+            }
+            else
+            {
+                input_constraint ic;
+                ic.value = value;
+                if(!ctx.name_vars.count(name))
+                {
+                    printf("Can't constrain over unknown variable %s!\n", name);
+                    return false;
+                }
+                ic.id = ctx.name_vars[name];
+                input_constraints.push_back(ic);
+            }
+        }
+
+        // Output constraints have to be applied one-by-one.
+        std::vector<polynomial> target = {ctx.p};
+        for(const output_constraint& o: output_constraints)
+        {
+            polynomial zero = target[0];
+            for(int i = 0; i < o.derivative; ++i)
+            {
+                std::optional<polynomial> res = differentiate(zero, o.id);
+                if(!res.has_value())
+                {
+                    printf("Differentiation failed!\n");
+                    return false;
+                }
+                zero = *res;
+            }
+            for(const input_constraint& ic: input_constraints)
+                zero = assign(zero, ic.id, ic.value);
+            zero.terms.push_back(term{-o.value, {}});
+
+            if(!pin(zero, ctx.axes.data(), ctx.axes.size()-1, target))
+            {
+                printf("Pinning failed!\n");
                 return false;
             }
-            constraints.push_back(pc);
         }
-        auto val = p.pin(constraints);
-        if(val.has_value())
-        {
-            p = *val;
-            return true;
-        }
-        return false;
+        ctx.p = target[0];
+        return true;
     }},
+    /*
     {"reassign-names", [](polynomial& p, const std::vector<parameter>& parameters)->bool
     {
         NO_PARAMS();
@@ -1037,6 +785,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         p = p.reassign_variable_names();
         return true;
     }},
+    */
 };
 
 int main(int argc, char** argv)
@@ -1047,7 +796,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    polynomial pol;
+    context ctx;
 
     std::string src_str;
     bool success = read_text_file(argv[1], src_str);
@@ -1106,7 +855,7 @@ int main(int argc, char** argv)
         }
 
         auto it = command_handlers.find(command_name);
-        if(!it->second(pol, parameters))
+        if(!it->second(ctx, parameters))
         {
             fprintf(stderr, "Command \"%s\" failed, exiting.\n", command_name.c_str());
             return 4;

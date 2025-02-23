@@ -5,8 +5,6 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
-#include <map>
-#include <set>
 
 bool operator<(const polynomial& a, const polynomial& b)
 {
@@ -142,12 +140,17 @@ polynomial polynomial::create(
         t.mul.push_back({variable_counter++, 1});
 
         unsigned it = i;
-        for(int d = 0; d < dimension; ++d)
+        for(unsigned d = 0; d < dimension; ++d)
         {
-            t.mul.push_back({
-                indeterminates[d],
-                it % (degree+1)
-            });
+            unsigned exponent = it % (degree+1);
+
+            if(exponent != 0)
+            {
+                t.mul.push_back({
+                    indeterminates[d],
+                    exponent
+                });
+            }
             it /= degree+1;
         }
         p.terms.push_back(t);
@@ -263,10 +266,10 @@ polynomial simplify(const term& t)
         const var_power& p = res.mul[i];
         if(p.roots.has_value())
         {
-            std::optional<polynomial> value = try_solve_single_root(p.roots->expr, p.roots->var, p.degree);
-            if(value.has_value())
+            std::variant<polynomial, solve_failure_reason> root = try_solve_single_root(p.roots->expr, p.roots->var, p.degree);
+            if(polynomial* p = std::get_if<polynomial>(&root))
             { // We're able to solve this root now!
-                pres = multiply(pres, *value);
+                pres = multiply(pres, *p);
                 res.mul.erase(res.mul.begin()+i);
                 continue;
             }
@@ -436,7 +439,7 @@ polynomial assign(const polynomial& p, variable id, const polynomial& equivalent
 
 polynomial assign(const polynomial& p, variable id, double value)
 {
-    polynomial res = p;
+    polynomial res;
     for(const term& t: p.terms)
     {
         polynomial ta = assign(t, id, value);
@@ -467,6 +470,15 @@ bool depends_on_var(const polynomial& p, variable id)
         }
     }
     return false;
+}
+
+std::set<variable> live_variables(const polynomial& p)
+{
+    std::set<variable> variables;
+    for(const term& t: p.terms)
+    for(const var_power& vp: t.mul)
+        variables.insert(vp.id);
+    return variables;
 }
 
 std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polynomial& p, variable id, unsigned exponent)
@@ -673,7 +685,7 @@ bool pin(
             {
                 if(!best_equivalent.has_value() || *p < *best_equivalent)
                 {
-                    *best_equivalent = std::move(*p);
+                    best_equivalent = std::move(*p);
                     best_id = id;
                 }
             }
@@ -685,7 +697,7 @@ bool pin(
         }
 
         if(!best_equivalent.has_value())
-        { // None good equivalent polynomial found, so resort to roots().
+        { // No good equivalent polynomial found, so resort to roots().
             // Literally no roots found or zero candidates, this sucks.
             if(best_failure <= solve_failure_reason::INFINITE_ROOTS || best_id < 0)
                 return false;
@@ -701,5 +713,5 @@ bool pin(
             p = assign(p, best_id, *best_equivalent);
     }
 
-    return false;
+    return true;
 }

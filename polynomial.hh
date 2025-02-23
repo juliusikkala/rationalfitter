@@ -4,6 +4,7 @@
 #include <optional>
 #include <variant>
 #include <map>
+#include <set>
 
 struct polynomial;
 
@@ -83,6 +84,7 @@ polynomial assign(const polynomial& p, variable id, double value);
 
 std::optional<double> try_get_constant_polynomial_value(const polynomial& p);
 bool depends_on_var(const polynomial& p, variable id);
+std::set<variable> live_variables(const polynomial& p);
 // Tries to solve the roots raised to 'exponent', and returns a value if it
 // found a single root. The exponent is meaningful to do here, because e.g. if
 // the root is +-2 but exponent is 2, there's only one possible value anyway
