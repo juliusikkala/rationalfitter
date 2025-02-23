@@ -18,7 +18,7 @@ bool operator<(const polynomial& a, const polynomial& b)
         if(a.terms[i] < b.terms[i])
             return true;
         if(b.terms[i] < a.terms[i])
-            return true;
+            return false;
     }
     return false;
 }
@@ -40,7 +40,7 @@ bool operator<(const term& a, const term& b)
         if(a.mul[i] < b.mul[i])
             return true;
         if(b.mul[i] < a.mul[i])
-            return true;
+            return false;
     }
 
     return a.coefficient < b.coefficient;
@@ -193,7 +193,7 @@ std::optional<term> differentiate(const term& t, variable id)
 term sort(const term& t)
 {
     term res = t;
-    std::sort(res.mul.begin(), res.mul.end());
+    std::stable_sort(res.mul.begin(), res.mul.end());
     return res;
 }
 
@@ -384,7 +384,7 @@ polynomial sort(const polynomial& p)
         t = sort(t);
 
     // Sort the terms by their variables.
-    std::sort(res.terms.begin(), res.terms.end());
+    std::stable_sort(res.terms.begin(), res.terms.end());
     return res;
 }
 
@@ -423,6 +423,7 @@ polynomial simplify(const polynomial& p, double zero_epsilon)
         }
         ++i;
     }
+    // The changed sums may have changed the order here. 
     return res;
 }
 

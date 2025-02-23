@@ -56,262 +56,6 @@ bool is_integer(double d)
     return d == double(int64_t(d));
 }
 
-/*
-struct polynomial
-{
-    polynomial reassign_variable_names() const
-    {
-        polynomial copy = *this;
-        std::map<char, char> old_to_new;
-        for(coefficient& c: copy.coefficients)
-        for(var_weight& w: c.sum)
-            if(w.name)
-                old_to_new[w.name];
-
-        char name_counter = 'a';
-        for(auto& pair: old_to_new)
-        {
-            if(name_counter == 'e') ++name_counter;
-            pair.second = name_counter++;
-        }
-
-        for(coefficient& c: copy.coefficients)
-        for(var_weight& w: c.sum)
-            if(w.name)
-                w.name = old_to_new[w.name];
-        return copy;
-    }
-
-    void print_c()
-    {
-        std::set<char> vars;
-        for(const coefficient& c: coefficients)
-        for(const var_weight& w: c.sum)
-            vars.insert(w.name);
-
-        printf("float func(");
-        std::vector<unsigned> max_degrees(output_axis, 0);
-        for(const coefficient& c: coefficients)
-        {
-            for(unsigned i = 0; i < max_degrees.size(); ++i)
-                max_degrees[i] = max_degrees[i] > c.degrees[i] ? max_degrees[i] : c.degrees[i];
-        }
-
-        bool first_param = true;
-        for(unsigned i = 0; i < max_degrees.size(); ++i)
-        {
-            if(max_degrees[i] > 0)
-            {
-                if(!first_param) printf(", ");
-                printf("float %c", 'x'+i);
-                first_param = false;
-            }
-        }
-
-        for(char var: vars)
-        {
-            if(var != 0)
-            {
-                if(!first_param) printf(", ");
-                printf("float %c", var);
-                first_param = false;
-            }
-        }
-        printf(")\n{\n");
-        for(unsigned i = 0; i < max_degrees.size(); ++i)
-        {
-            int degree = max_degrees[i];
-            char name = 'x'+i;
-            std::string prevname(1, name);
-            for(unsigned j = 2; j <= degree; ++j)
-            {
-                std::string dname(1, name);
-                dname += std::to_string(j);
-                printf("    float %s = %s * %c;\n", dname.c_str(), prevname.c_str(), name);
-                prevname = dname;
-            }
-        }
-
-        printf("    float res = 0;\n");
-        for(unsigned i = 0; i < coefficients.size(); ++i)
-        {
-            const std::vector<unsigned>& degrees = coefficients[i].degrees;
-
-            std::string name = coefficient_name(i);
-            std::string term;
-            bool first_d = true;
-            for(unsigned d = 0; d < degrees.size(); ++d)
-            {
-                char letter = 'x' + d;
-                if(degrees[d] == 0)
-                    continue;
-                if(!first_d)
-                    term += " * ";
-                first_d = false;
-                term += letter;
-                if(degrees[d] > 1)
-                    term += std::to_string(degrees[d]);
-            }
-            if(name[0] == '-')
-            {
-                printf("    res -= ");
-                name.erase(name.begin());
-            }
-            else
-            {
-                printf("    res += ");
-            }
-            bool skip_name = name == "1" && !term.empty();
-            if(!skip_name)
-                printf("%s", name.c_str());
-            if(term.size() > 0)
-            {
-                if(!skip_name)
-                    printf(" * ");
-                printf("%s", term.c_str());
-            }
-            printf(";\n");
-        }
-        printf("    return res;\n}\n");
-    }
-
-    void print_numpy()
-    {
-        std::set<char> vars;
-        for(const coefficient& c: coefficients)
-        for(const var_weight& w: c.sum)
-            vars.insert(w.name);
-
-        // We always add the constant offset even if it's not being used.
-        vars.insert(0);
-
-        std::string constant;
-        std::vector<std::string> multipliers;
-        for(char var: vars)
-        {
-            std::string sum;
-            int sum_entries = 0;
-            bool sum_has_axes = false;
-            for(const coefficient& c: coefficients)
-            {
-                std::string term;
-                bool first_d = true;
-                for(unsigned d = 0; d < c.degrees.size(); ++d)
-                {
-                    char letter = 'x' + d;
-                    if(c.degrees[d] == 0)
-                        continue;
-                    if(!first_d)
-                        term += " * ";
-                    first_d = false;
-                    term += letter;
-                    if(c.degrees[d] > 1)
-                        term += "**"+std::to_string(c.degrees[d]);
-                }
-                for(const var_weight& w: c.sum)
-                {
-                    if(w.name == var)
-                    {
-                        float weight = w.weight;
-
-                        if(sum_entries != 0)
-                        {
-                            sum += " ";
-                            if(weight >= 0)
-                                sum += "+ ";
-                            else
-                            {
-                                sum += "- ";
-                                weight = fabs(weight);
-                            }
-                        }
-                        else if(weight < 0)
-                        {
-                            sum += "-";
-                            weight = fabs(weight);
-                        }
-
-                        if(weight != 1 || term.empty())
-                        {
-                            sum += is_integer(weight) ?
-                                std::to_string(int64_t(weight)) :
-                                std::to_string(weight);
-                            if(!term.empty())
-                                sum += " * ";
-                        }
-
-                        if(!term.empty())
-                            sum_has_axes = true;
-
-                        sum += term;
-                        sum_entries++;
-                    }
-                }
-            }
-
-            if(var == 0)
-            {
-                if(sum_has_axes)
-                    constant = "offset = "+sum;
-                else if(sum_entries != 0)
-                    constant = "offset = np.ones(x.shape) * ("+sum+")";
-                else
-                    constant = "offset = np.zeros(x.shape)";
-            }
-            else
-            {
-                multipliers.push_back(sum + " # " + var);
-            }
-        }
-
-        std::string multipliers_str;
-        for(unsigned i = 0; i < multipliers.size(); ++i)
-        {
-            if(i != 0)
-                multipliers_str += "        , ";
-            else
-                multipliers_str += "        ";
-            multipliers_str += multipliers[i] + "\n";
-        }
-
-        std::string params;
-        std::string flats;
-        for(unsigned i = 0; i <= output_axis; ++i)
-        {
-            if(i != 0)
-                params += ", ";
-            params += ('X' + i);
-            flats += "    ";
-            flats += ('x' + i);
-            flats += " = ";
-            flats += ('X' + i);
-            flats += ".flatten()\n";
-        }
-
-        printf(R"(import numpy as np
-
-def fit(%s):
-%s
-    %s
-    b = %c - offset
-    A = np.array([
-%s    ]).T
-    coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
-    out = (np.dot(A, coeff) + offset).reshape(X.shape)
-    return (coeff, out)
-)",
-            params.c_str(),
-            flats.c_str(),
-            constant.c_str(),
-            'x'+output_axis,
-            multipliers_str.c_str()
-        );
-    }
-
-    unsigned output_axis;
-    std::vector<coefficient> coefficients;
-};
-*/
 std::string polynomial_to_string(
     context& ctx,
     const polynomial& p,
@@ -437,6 +181,132 @@ std::string polynomial_to_string(
         first_line = false;
     }
     return polynomial_string;
+}
+
+std::string polynomial_to_c(
+    context& ctx, const polynomial& p
+){
+    std::map<std::string, int> vars_max_degrees;
+    for(const term& t: p.terms)
+    {
+        for(const var_power& vp: t.mul)
+        {
+            if(vp.roots.has_value())
+                return "(cannot represent roots() in C)";
+            int& degree = vars_max_degrees[ctx.var_names[vp.id]];
+            degree = degree > vp.degree ? degree : vp.degree;
+        }
+    }
+    std::string code = "float func(";
+
+    bool first_param = true;
+    for(auto& pair: vars_max_degrees)
+    {
+        if(pair.second > 0)
+        {
+            if(!first_param) code += ", ";
+            code += "float " + pair.first;
+            first_param = false;
+        }
+    }
+    code += ")\n{\n";
+
+    for(auto& pair: vars_max_degrees)
+    {
+        int degree = pair.second;
+        std::string prevname = pair.first;
+        for(unsigned j = 2; j <= degree; ++j)
+        {
+            std::string dname = pair.first + std::to_string(j);
+            code += "    float "+dname+" = "+prevname+" * "+pair.first+";\n";
+            prevname = dname;
+        }
+    }
+    code += "    float res = 0;\n";
+    for(const term& t: p.terms)
+    {
+        std::string tstr = term_to_string(ctx, t, "");
+        if(tstr[0] == '-')
+        {
+            code += "    res -=";
+            tstr.erase(tstr.begin());
+        }
+        else code += "    res += ";
+        code += tstr + ";\n";
+    }
+
+    code += "    return res;\n}";
+    return code;
+}
+
+std::string polynomial_to_numpy(
+    context& ctx, const polynomial& p
+){
+    std::map<indeterminate_group, polynomial> groups = 
+        group_by_indeterminates(p, ctx.coefficients.data(), ctx.coefficients.size());
+    std::string code;
+
+    code += "import numpy as np\n\n";
+    code += "def fit(";
+
+    for(unsigned i = 0; i < ctx.axes.size(); ++i)
+    {
+        if(i != 0)
+            code += ", ";
+        code += ctx.var_names[ctx.axes[i]]+"_data";
+    }
+    code += "):\n";
+
+    for(unsigned i = 0; i < ctx.axes.size(); ++i)
+    {
+        const std::string& name = ctx.var_names[ctx.axes[i]];
+        code += "    "+name+" = "+name+"_data.flatten()\n";
+    }
+
+    code += "    offset = ";
+    indeterminate_group constant_group;
+    if(groups.count(constant_group))
+    {
+        polynomial& group_polynomial = groups[constant_group];
+        std::set<variable> live = live_variables(group_polynomial);
+        std::string poly_str = polynomial_to_string(ctx, group_polynomial, false, false, "**");
+
+        if(live.size() != 0)
+            code += poly_str+"\n";
+        else
+            code += "np.ones("+ctx.var_names[ctx.axes[0]]+".shape) * ("+poly_str+")\n";
+    }
+    else
+    {
+        code += "np.zeros("+ctx.var_names[ctx.axes[0]]+".shape)\n";
+    }
+    code += "    b = "+ctx.var_names[ctx.axes.back()]+" - offset\n";
+    code += "    A = np.array([\n";
+
+    for(auto it = groups.begin(); it != groups.end();)
+    {
+        // Skip constants here.
+        if(it->first.indeterminates.size() == 0)
+        {
+            ++it;
+            continue;
+        }
+        std::string poly_str = polynomial_to_string(ctx, it->second, false, false, "**");
+        term indeterminate_term = term{1, it->first.indeterminates};
+        code += "        " + poly_str;
+        ++it;
+        bool last = it == groups.end();
+        if(!last) code += ",";
+        code += " # " + term_to_string(ctx, indeterminate_term, "**");
+        code += "\n";
+    }
+
+    code += "    ).T\n";
+
+    code += "    coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)\n";
+    code += "    out = (np.dot(A, coeff) + offset).reshape("+ctx.var_names[ctx.axes[0]]+"_data.shape)\n";
+    code += "    return (coeff, out)\n";
+    return code;
 }
 
 void skip_whitespace(const char*& str)
@@ -578,14 +448,15 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 return false;
             }
         }
-        /*
-        if(c_code)
-            p.print_c();
-        else if(numpy)
-            p.print_numpy();
-            */
 
-        std::string str = polynomial_to_string(
+        std::string str;
+        if(c_code)
+            str = polynomial_to_c(ctx, ctx.p);
+        else if(numpy)
+        {
+            str = polynomial_to_numpy(ctx, ctx.p);
+        }
+        else str = polynomial_to_string(
             ctx,
             ctx.p,
             !linear_combination,
@@ -777,15 +648,56 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         ctx.p = target[0];
         return true;
     }},
-    /*
-    {"reassign-names", [](polynomial& p, const std::vector<parameter>& parameters)->bool
+    {"reassign-names", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
         NO_PARAMS();
 
-        p = p.reassign_variable_names();
+        std::set<variable> live = live_variables(ctx.p);
+
+        // Remove non-axis coefficient names.
+        for(auto it = ctx.var_names.begin(); it != ctx.var_names.end();)
+        {
+            bool is_axis = false;
+            for(variable axis: ctx.axes)
+            {
+                if(it->first == axis)
+                    is_axis = true;
+            }
+
+            if(!is_axis)
+            {
+                ctx.name_vars.erase(it->second);
+                it = ctx.var_names.erase(it);
+            }
+            else ++it;
+        }
+
+        bool alphabet_names = live.size() < 'z'-'a'-ctx.axes.size();
+        char alphabet_counter = 'a';
+        unsigned i = 0;
+        for(variable var: live)
+        {
+            if(ctx.var_names.count(var))
+                continue;
+
+            std::string name;
+            if(alphabet_names)
+            {
+                while(ctx.name_vars.count(std::string(1, alphabet_counter)) || alphabet_counter == 'e')
+                    alphabet_counter++;
+                name = std::string(1, alphabet_counter++);
+            }
+            else
+            {
+                name = "c"+std::to_string(i++);
+            }
+
+            ctx.name_vars[name] = var;
+            ctx.var_names[var] = name;
+        }
+
         return true;
     }},
-    */
 };
 
 int main(int argc, char** argv)
