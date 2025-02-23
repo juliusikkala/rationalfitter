@@ -23,7 +23,8 @@ struct polynomial
         const variable* indeterminates,
         size_t dimension,
         unsigned degree,
-        variable& variable_counter
+        variable& variable_counter,
+        bool normalized = false// If true, one less variable is used and the constant is 1.
     );
 };
 bool operator<(const polynomial& a, const polynomial& b);
@@ -82,7 +83,7 @@ polynomial simplify(const polynomial& p, double zero_epsilon = 1e-10); // Merges
 polynomial assign(const polynomial& p, variable id, const polynomial& equivalent);
 polynomial assign(const polynomial& p, variable id, double value);
 
-std::optional<double> try_get_constant_polynomial_value(const polynomial& p);
+std::optional<double> try_get_constant_value(const polynomial& p);
 bool depends_on_var(const polynomial& p, variable id);
 std::set<variable> live_variables(const polynomial& p);
 // Tries to solve the roots raised to 'exponent', and returns a value if it
@@ -111,11 +112,18 @@ std::map<indeterminate_group, polynomial> group_by_indeterminates(
     size_t indeterminate_count
 );
 
+polynomial get_zero_polynomial(const polynomial& a, double right_side);
+
 // Reduces the number of variables with the knowledge that 'zero' must always be
 // zero regardless of the values of 'indeterminates'. The resulting equivalences
 // between variables are then assigned to every polynomial in 'target'.
+//
+// Additionally, this function ensures that 'nonzero' is non-zero. This is
+// necessary to filter out solutions that break a division. If you don't need
+// this feature, you can set it to polynomial::create(1.0).
 bool pin(
     const polynomial& zero,
+    const polynomial& nonzero,
     const variable* indeterminates,
     size_t indeterminate_count,
     std::vector<polynomial>& target

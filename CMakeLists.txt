@@ -10,7 +10,7 @@ elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
    add_compile_options(-fcolor-diagnostics)
 endif()
 
-add_executable(polynomialpinner polynomialpinner.cc polynomial.cc)
+add_executable(polynomialpinner polynomialpinner.cc polynomial.cc rational.cc)
 set_property(TARGET polynomialpinner PROPERTY CXX_STANDARD 17)
 set_property(TARGET polynomialpinner PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET polynomialpinner PROPERTY CXX_EXTENSIONS OFF)

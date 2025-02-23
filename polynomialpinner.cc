@@ -1,4 +1,5 @@
 #include "polynomial.hh"
+#include "rational.hh"
 #include <cstdio>
 #include <vector>
 #include <cmath>
@@ -27,7 +28,7 @@ struct context
     std::map<std::string, variable> name_vars;
     std::vector<variable> axes;
     std::vector<variable> coefficients;
-    polynomial p;
+    rational r;
 };
 
 bool read_text_file(const char* path, std::string& data)
@@ -114,9 +115,6 @@ std::string polynomial_to_string(
     bool multiline,
     const char* pow_symbol
 ){
-    if(p.terms.size() == 0)
-        return "0";
-
     std::vector<variable>& indeterminates = group_by_axes ? ctx.axes : ctx.coefficients;
     std::map<indeterminate_group, polynomial> groups = 
         group_by_indeterminates(p, indeterminates.data(), indeterminates.size());
@@ -151,7 +149,7 @@ std::string polynomial_to_string(
         std::string indeterminate_string = term_to_string(ctx, indeterminate_term, pow_symbol);
 
         bool implicit_coefficient = false;
-        if(poly.terms.size() > 1)
+        if(poly.terms.size() > 1 && (groups.size() > 1 || indeterminate_string != "1"))
         {
             poly_string = "(" + poly_string + ")";
         }
@@ -180,23 +178,48 @@ std::string polynomial_to_string(
         polynomial_string += joined_string;
         first_line = false;
     }
-    return polynomial_string;
+    return polynomial_string.size() == 0 ? "0" : polynomial_string;
 }
 
-std::string polynomial_to_c(
-    context& ctx, const polynomial& p
+std::string rational_to_string(
+    context& ctx,
+    const rational& r,
+    bool group_by_axes,
+    bool multiline,
+    const char* pow_symbol="^"
+){
+    std::string num = polynomial_to_string(ctx, r.numerator, group_by_axes, multiline, pow_symbol);
+    std::string denom = polynomial_to_string(ctx, r.denominator, group_by_axes, multiline, pow_symbol);
+
+    if(denom == "1") return num;
+
+    if(r.numerator.terms.size() >= 2) num = "("+num+")";
+    if(r.denominator.terms.size() >= 2) denom = "("+denom+")";
+
+    return num + "/" + denom;
+}
+
+std::string rational_to_c(
+    context& ctx, const rational& r
 ){
     std::map<std::string, int> vars_max_degrees;
-    for(const term& t: p.terms)
-    {
+    bool has_roots = false;
+    auto check_vars = [&](const term& t){
         for(const var_power& vp: t.mul)
         {
             if(vp.roots.has_value())
-                return "(cannot represent roots() in C)";
+            {
+                has_roots = true;
+                continue;
+            }
             int& degree = vars_max_degrees[ctx.var_names[vp.id]];
             degree = degree > vp.degree ? degree : vp.degree;
         }
-    }
+    };
+    for(const term& t: r.numerator.terms) check_vars(t);
+    for(const term& t: r.denominator.terms) check_vars(t);
+    if(has_roots)
+        return "(cannot represent roots() in C)";
     std::string code = "float func(";
 
     bool first_param = true;
@@ -222,26 +245,48 @@ std::string polynomial_to_c(
             prevname = dname;
         }
     }
-    code += "    float res = 0;\n";
-    for(const term& t: p.terms)
+    code += "    float num = 0;\n";
+    for(const term& t: r.numerator.terms)
     {
         std::string tstr = term_to_string(ctx, t, "");
         if(tstr[0] == '-')
         {
-            code += "    res -=";
+            code += "    num -=";
             tstr.erase(tstr.begin());
         }
-        else code += "    res += ";
+        else code += "    num += ";
         code += tstr + ";\n";
     }
 
-    code += "    return res;\n}";
+    if(try_get_constant_value(r.denominator) != 1.0)
+    {
+        code += "    float denom = 0;\n";
+        for(const term& t: r.denominator.terms)
+        {
+            std::string tstr = term_to_string(ctx, t, "");
+            if(tstr[0] == '-')
+            {
+                code += "    denom -=";
+                tstr.erase(tstr.begin());
+            }
+            else code += "    denom += ";
+            code += tstr + ";\n";
+        }
+        code += "    return num*(1.0f/denom);\n}";
+    }
+    else
+    {
+        code += "    return num;\n}";
+    }
     return code;
 }
 
-std::string polynomial_to_numpy(
-    context& ctx, const polynomial& p
+std::string rational_to_numpy(
+    context& ctx, const rational& r
 ){
+    if(try_get_constant_value(r.denominator) != 1.0)
+        return "(numpy fitting code output for rationals is not supported yet)";
+    const polynomial& p = r.numerator;
     std::map<indeterminate_group, polynomial> groups = 
         group_by_indeterminates(p, ctx.coefficients.data(), ctx.coefficients.size());
     std::string code;
@@ -307,6 +352,74 @@ std::string polynomial_to_numpy(
     code += "    out = (np.dot(A, coeff) + offset).reshape("+ctx.var_names[ctx.axes[0]]+"_data.shape)\n";
     code += "    return (coeff, out)\n";
     return code;
+}
+
+bool assign_axis_names(context& ctx, const std::vector<std::string>& axis_names)
+{
+    ctx.axes.clear();
+    ctx.coefficients.clear();
+    ctx.var_names.clear();
+    ctx.name_vars.clear();
+    for(size_t i = 0; i < axis_names.size(); ++i)
+    {
+        variable id = (1<<20)+i;
+        ctx.axes.push_back(id);
+        ctx.var_names[id] = axis_names[i];
+        if(ctx.name_vars.count(axis_names[i]))
+        {
+            printf("Axis names must be unique.\n");
+            return false;
+        }
+        ctx.name_vars[axis_names[i]] = id;
+    }
+    return true;
+}
+
+void assign_variable_names(context& ctx)
+{
+    std::set<variable> live = live_variables(ctx.r);
+
+    // Remove non-axis coefficient names.
+    for(auto it = ctx.var_names.begin(); it != ctx.var_names.end();)
+    {
+        bool is_axis = false;
+        for(variable axis: ctx.axes)
+        {
+            if(it->first == axis)
+                is_axis = true;
+        }
+
+        if(!is_axis)
+        {
+            ctx.name_vars.erase(it->second);
+            it = ctx.var_names.erase(it);
+        }
+        else ++it;
+    }
+
+    bool alphabet_names = live.size() < 'z'-'a'-ctx.axes.size();
+    char alphabet_counter = 'a';
+    unsigned i = 0;
+    for(variable var: live)
+    {
+        if(ctx.var_names.count(var))
+            continue;
+
+        std::string name;
+        if(alphabet_names)
+        {
+            while(ctx.name_vars.count(std::string(1, alphabet_counter)) || alphabet_counter == 'e')
+                alphabet_counter++;
+            name = std::string(1, alphabet_counter++);
+        }
+        else
+        {
+            name = "c"+std::to_string(i++);
+        }
+
+        ctx.name_vars[name] = var;
+        ctx.var_names[var] = name;
+    }
 }
 
 void skip_whitespace(const char*& str)
@@ -451,14 +564,14 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
 
         std::string str;
         if(c_code)
-            str = polynomial_to_c(ctx, ctx.p);
+            str = rational_to_c(ctx, ctx.r);
         else if(numpy)
         {
-            str = polynomial_to_numpy(ctx, ctx.p);
+            str = rational_to_numpy(ctx, ctx.r);
         }
-        else str = polynomial_to_string(
+        else str = rational_to_string(
             ctx,
-            ctx.p,
+            ctx.r,
             !linear_combination,
             multiline,
             "^"
@@ -477,52 +590,52 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
         }
 
-        int dimension = axis_names.size()-1;
-        if(dimension < 0 || dimension > 4)
+        int dimension = int(axis_names.size())-1;
+        if(dimension <= 0)
         {
-            printf("Currently, only dimensions [0, 4] are supported.\n");
+            printf("Dimensions must be greater than zero!\n");
             return false;
         }
-        ctx.axes.clear();
-        ctx.coefficients.clear();
-        ctx.var_names.clear();
-        ctx.name_vars.clear();
-        for(size_t i = 0; i < axis_names.size(); ++i)
-        {
-            variable id = (1<<20)+i;
-            ctx.axes.push_back(id);
-            ctx.var_names[id] = axis_names[i];
-            if(ctx.name_vars.count(axis_names[i]))
-            {
-                printf("Axis names must be unique.\n");
-                return false;
-            }
-            ctx.name_vars[axis_names[i]] = id;
-        }
+        bool success = assign_axis_names(ctx, axis_names);
+        if(!success)
+            return false;
 
         variable var_counter = 0;
-        ctx.p = polynomial::create(ctx.axes.data(), dimension, degree, var_counter);
-        bool alphabet_names = var_counter < 'z'-'a'-axis_names.size();
-        char alphabet_counter = 'a';
+        ctx.r.numerator = polynomial::create(ctx.axes.data(), dimension, degree, var_counter);
+        ctx.r.denominator = polynomial::create(1);
         for(variable i = 0; i < var_counter; ++i)
-        {
-            std::string name;
-            if(alphabet_names)
-            {
-                // Skip 'e' for desmos compatibility :D
-                while(ctx.name_vars.count(std::string(1, alphabet_counter)) || alphabet_counter == 'e')
-                    alphabet_counter++;
-                name = std::string(1, alphabet_counter++);
-            }
-            else
-            {
-                name = "c"+std::to_string(i);
-            }
-
-            ctx.name_vars[name] = i;
-            ctx.var_names[i] = name;
             ctx.coefficients.push_back(i);
+        assign_variable_names(ctx);
+        return true;
+    }},
+    {"rational", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    {
+        int num_degree;
+        int denom_degree;
+        std::vector<std::string> axis_names;
+        PARAMS(num_degree, denom_degree, axis_names);
+        if(num_degree < 0 || denom_degree < 0)
+        {
+            printf("Degree must be a positive integer!\n");
+            return false;
         }
+
+        int dimension = int(axis_names.size())-1;
+        if(dimension <= 0)
+        {
+            printf("Dimensions must be greater than zero!\n");
+            return false;
+        }
+        bool success = assign_axis_names(ctx, axis_names);
+        if(!success)
+            return false;
+
+        variable var_counter = 0;
+        ctx.r.numerator = polynomial::create(ctx.axes.data(), dimension, num_degree, var_counter);
+        ctx.r.denominator = polynomial::create(ctx.axes.data(), dimension, denom_degree, var_counter, true);
+        for(variable i = 0; i < var_counter; ++i)
+            ctx.coefficients.push_back(i);
+        assign_variable_names(ctx);
         return true;
     }},
     {"let", [](context& ctx, const std::vector<parameter>& parameters)->bool
@@ -536,7 +649,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
         }
         variable id = ctx.name_vars[name];
-        ctx.p = assign(ctx.p, id, value);
+        ctx.r = assign(ctx.r, id, value);
         return true;
     }},
     {"differentiate", [](context& ctx, const std::vector<parameter>& parameters)->bool
@@ -550,13 +663,13 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
         }
         variable id = ctx.name_vars[name];
-        std::optional<polynomial> result = differentiate(ctx.p, id);
+        std::optional<rational> result = differentiate(ctx.r, id);
         if(!result.has_value())
         {
-            printf("Differentiation failed for polynomial %s\n", polynomial_to_string(ctx, ctx.p, true, false).c_str());
+            printf("Differentiation failed for %s\n", rational_to_string(ctx, ctx.r, true, false).c_str());
             return false;
         }
-        ctx.p = *result;
+        ctx.r = *result;
         return true;
     }},
     {"pin", [](context& ctx, const std::vector<parameter>& parameters)->bool
@@ -621,13 +734,13 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         }
 
         // Output constraints have to be applied one-by-one.
-        std::vector<polynomial> target = {ctx.p};
+        rational target = ctx.r;
         for(const output_constraint& o: output_constraints)
         {
-            polynomial zero = target[0];
+            rational zero = target;
             for(int i = 0; i < o.derivative; ++i)
             {
-                std::optional<polynomial> res = differentiate(zero, o.id);
+                std::optional<rational> res = differentiate(zero, o.id);
                 if(!res.has_value())
                 {
                     printf("Differentiation failed!\n");
@@ -635,67 +748,28 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 }
                 zero = *res;
             }
+
             for(const input_constraint& ic: input_constraints)
                 zero = assign(zero, ic.id, ic.value);
-            zero.terms.push_back(term{-o.value, {}});
+            polynomial zero_poly = get_zero_polynomial(zero, o.value);
 
-            if(!pin(zero, ctx.axes.data(), ctx.axes.size()-1, target))
+            std::vector<polynomial> vec = {target.numerator, target.denominator};
+            if(!pin(zero_poly, zero.denominator, ctx.axes.data(), ctx.axes.size()-1, vec))
             {
                 printf("Pinning failed!\n");
                 return false;
             }
+            target.numerator = vec[0];
+            target.denominator = vec[1];
+            target = simplify(target);
         }
-        ctx.p = target[0];
+        ctx.r = target;
         return true;
     }},
     {"reassign-names", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
         NO_PARAMS();
-
-        std::set<variable> live = live_variables(ctx.p);
-
-        // Remove non-axis coefficient names.
-        for(auto it = ctx.var_names.begin(); it != ctx.var_names.end();)
-        {
-            bool is_axis = false;
-            for(variable axis: ctx.axes)
-            {
-                if(it->first == axis)
-                    is_axis = true;
-            }
-
-            if(!is_axis)
-            {
-                ctx.name_vars.erase(it->second);
-                it = ctx.var_names.erase(it);
-            }
-            else ++it;
-        }
-
-        bool alphabet_names = live.size() < 'z'-'a'-ctx.axes.size();
-        char alphabet_counter = 'a';
-        unsigned i = 0;
-        for(variable var: live)
-        {
-            if(ctx.var_names.count(var))
-                continue;
-
-            std::string name;
-            if(alphabet_names)
-            {
-                while(ctx.name_vars.count(std::string(1, alphabet_counter)) || alphabet_counter == 'e')
-                    alphabet_counter++;
-                name = std::string(1, alphabet_counter++);
-            }
-            else
-            {
-                name = "c"+std::to_string(i++);
-            }
-
-            ctx.name_vars[name] = var;
-            ctx.var_names[var] = name;
-        }
-
+        assign_variable_names(ctx);
         return true;
     }},
 };

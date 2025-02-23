@@ -1,5 +1,6 @@
 #include "polynomial.hh"
 #include "math.hh"
+#include "rational.hh"
 #include <algorithm>
 #include <cmath>
 #include <climits>
@@ -126,7 +127,8 @@ polynomial polynomial::create(
     const variable* indeterminates,
     size_t dimension,
     unsigned degree,
-    variable& variable_counter
+    variable& variable_counter,
+    bool normalized
 ){
     polynomial p;
     unsigned term_count = 1;
@@ -137,7 +139,8 @@ polynomial polynomial::create(
     {
         term t;
         t.coefficient = 1;
-        t.mul.push_back({variable_counter++, 1});
+        if(i != 0 || !normalized)
+            t.mul.push_back({variable_counter++, 1});
 
         unsigned it = i;
         for(unsigned d = 0; d < dimension; ++d)
@@ -156,7 +159,7 @@ polynomial polynomial::create(
         p.terms.push_back(t);
     }
 
-    return p;
+    return sort(p);
 }
 
 std::optional<term> differentiate(const term& t, variable id)
@@ -449,7 +452,7 @@ polynomial assign(const polynomial& p, variable id, double value)
     return simplify(res);
 }
 
-std::optional<double> try_get_constant_polynomial_value(const polynomial& p)
+std::optional<double> try_get_constant_value(const polynomial& p)
 {
     if(p.terms.size() == 0)
         return 0;
@@ -502,8 +505,7 @@ std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polyn
     if(min_degree > max_degree) return solve_failure_reason::INFINITE_ROOTS;
     if(max_degree == min_degree)
     { // Simple to solve.
-        polynomial num;
-        polynomial denom;
+        rational rat;
         for(const term& t: p.terms)
         {
             term filtered_t = t;
@@ -519,19 +521,18 @@ std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polyn
             }
             if(has_var)
             {
-                denom.terms.push_back(filtered_t);
+                rat.denominator.terms.push_back(filtered_t);
             }
             else
             {
                 filtered_t.coefficient = -filtered_t.coefficient;
-                num.terms.push_back(filtered_t);
+                rat.numerator.terms.push_back(filtered_t);
             }
         }
 
-        num = simplify(num);
-        denom = simplify(denom);
+        rat = simplify(rat);
 
-        std::optional<double> denom_value = try_get_constant_polynomial_value(denom);
+        std::optional<double> denom_value = try_get_constant_value(rat.denominator);
         if(!denom_value.has_value())
         {
             // TODO: Rational functions support! Necessary! To make this work!
@@ -539,10 +540,10 @@ std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polyn
         }
 
         double inv_denom = 1.0 / *denom_value;
-        for(term& t: num.terms)
+        for(term& t: rat.numerator.terms)
             t.coefficient *= inv_denom;
 
-        std::optional<double> num_value = try_get_constant_polynomial_value(num);
+        std::optional<double> num_value = try_get_constant_value(rat.numerator);
 
         // If the root is zero, it's always the same, no questions asked.
         if(num_value.has_value() && *num_value == 0)
@@ -572,11 +573,11 @@ std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polyn
         {
             if(exponent == 1)
             { // Fast track
-                return num;
+                return rat.numerator;
             }
             polynomial res = polynomial::create(1.0);
             for(int i = 0; i < exponent; ++i)
-                res = multiply(res, num);
+                res = multiply(res, rat.numerator);
             return res;
         }
 
@@ -640,19 +641,28 @@ std::map<indeterminate_group, polynomial> group_by_indeterminates(
     return groups;
 }
 
+polynomial get_zero_polynomial(const polynomial& a, double right_side)
+{
+    polynomial res = a;
+    res.terms.push_back(term{-right_side, {}});
+    return res;
+}
+
 bool pin(
     const polynomial& zero,
+    const polynomial& nonzero,
     const variable* indeterminates,
     size_t indeterminate_count,
     std::vector<polynomial>& target
 ){
+    polynomial target_nonzero = nonzero;
     std::map<indeterminate_group, polynomial> zero_groups = 
         group_by_indeterminates(zero, indeterminates, indeterminate_count);
 
     for(auto it = zero_groups.begin(); it != zero_groups.end();)
     {
         polynomial& zero_polynomial = it->second;
-        std::optional<double> value = try_get_constant_polynomial_value(zero_polynomial);
+        std::optional<double> value = try_get_constant_value(zero_polynomial);
         if(value.has_value())
         {
             // If it's already zero, there's nothing to be done here.
@@ -686,8 +696,13 @@ bool pin(
             {
                 if(!best_equivalent.has_value() || *p < *best_equivalent)
                 {
-                    best_equivalent = std::move(*p);
-                    best_id = id;
+                    // Check non-zero condition.
+                    polynomial condition = assign(target_nonzero, id, *p);
+                    if(try_get_constant_value(condition) != 0)
+                    {
+                        best_equivalent = std::move(*p);
+                        best_id = id;
+                    }
                 }
             }
             else if(solve_failure_reason* r = std::get_if<solve_failure_reason>(&root))
@@ -712,6 +727,7 @@ bool pin(
             pair.second = assign(pair.second, best_id, *best_equivalent);
         for(polynomial& p: target)
             p = assign(p, best_id, *best_equivalent);
+        target_nonzero = assign(target_nonzero, best_id, *best_equivalent);
     }
 
     return true;
