@@ -151,11 +151,11 @@ matrix transpose(const matrix& m)
 
 std::tuple<matrix, matrix> qr_decompose(const matrix& A)
 {
-    if(A.w != A.h)
+    if(A.w >= A.h)
         return {{}, {}};
-    matrix Qt = matrix::eyes(A.w, A.h);
+    matrix Qt = matrix::eyes(A.h, A.h);
     matrix R = A;
-    for(int i = 0; i < A.w-1; ++i)
+    for(int i = 0; i < std::min(A.w, A.h-1); ++i)
     {
         matrix x = R.column(i).clip(0, i, 1, R.h-i);
         double alpha = -sign(x(0, 0)) * length(x);
@@ -166,8 +166,8 @@ std::tuple<matrix, matrix> qr_decompose(const matrix& A)
 
         matrix xx = mul(x, transpose(x)).value();
 
-        matrix Qi_small = sub(matrix::eyes(R.w-i, R.h-i), mul(xx, 2.0)).value();
-        matrix Qi_expand = matrix::eyes(R.w, R.h, 1.0);
+        matrix Qi_small = sub(matrix::eyes(R.h-i, R.h-i), mul(xx, 2.0)).value();
+        matrix Qi_expand = matrix::eyes(R.h, R.h, 1.0);
         Qi_expand.insert(i, i, Qi_small);
 
         Qt = mul(Qi_expand, Qt).value();
