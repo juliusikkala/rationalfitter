@@ -10,7 +10,17 @@ elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
    add_compile_options(-fcolor-diagnostics)
 endif()
 
-add_executable(polynomialpinner polynomialpinner.cc polynomial.cc rational.cc matrix.cc optimization.cc)
-set_property(TARGET polynomialpinner PROPERTY CXX_STANDARD 17)
-set_property(TARGET polynomialpinner PROPERTY CXX_STANDARD_REQUIRED ON)
-set_property(TARGET polynomialpinner PROPERTY CXX_EXTENSIONS OFF)
+add_compile_options(-fprofile-arcs -ftest-coverage)
+add_link_options(-fprofile-arcs -ftest-coverage)
+
+# Core is built as a "library" so that it's easier to link to test programs.
+add_library(fit-core OBJECT src/polynomial.cc src/rational.cc src/matrix.cc src/optimization.cc)
+add_executable(rationalfitter src/rationalfitter.cc)
+target_link_libraries(rationalfitter PUBLIC fit-core)
+set_property(TARGET rationalfitter PROPERTY CXX_STANDARD 17)
+set_property(TARGET rationalfitter PROPERTY CXX_STANDARD_REQUIRED ON)
+set_property(TARGET rationalfitter PROPERTY CXX_EXTENSIONS OFF)
+
+include(CTest)
+enable_testing()
+add_subdirectory(test)

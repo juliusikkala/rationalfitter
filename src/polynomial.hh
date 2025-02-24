@@ -1,5 +1,5 @@
-#ifndef POLYNOMIALPINNER_POLYNOMIAL_HH
-#define POLYNOMIALPINNER_POLYNOMIAL_HH
+#ifndef RATIONALFITTER_POLYNOMIAL_HH
+#define RATIONALFITTER_POLYNOMIAL_HH
 #include <vector>
 #include <optional>
 #include <variant>

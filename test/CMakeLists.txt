@@ -1,0 +1,9 @@
+function(test name source)
+    add_executable(${name} ${source})
+    target_include_directories(${name} PUBLIC ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(${name} fit-core)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+test(math-test math.cc)
+test(matrix-test matrix.cc)

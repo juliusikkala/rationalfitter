@@ -1,5 +1,5 @@
-#ifndef POLYNOMIALPINNER_RATIONAL_HH
-#define POLYNOMIALPINNER_RATIONAL_HH
+#ifndef RATIONALFITTER_RATIONAL_HH
+#define RATIONALFITTER_RATIONAL_HH
 #include "polynomial.hh"
 
 struct rational

@@ -84,6 +84,11 @@ void matrix::insert(unsigned x, unsigned y, const matrix& other)
         values[x+i+(y+j)*this->w] = other(i, j);
 }
 
+bool operator==(const matrix& a, const matrix& b)
+{
+    return a.w == b.w && a.h == b.h && a.values == b.values;
+}
+
 double length(const matrix& m)
 {
     double sum = 0;

@@ -1,5 +1,5 @@
-#ifndef POLYNOMIALPINNER_MATH_HH
-#define POLYNOMIALPINNER_MATH_HH
+#ifndef RATIONALFITTER_MATH_HH
+#define RATIONALFITTER_MATH_HH
 
 inline double ipow(double base, unsigned exp)
 {

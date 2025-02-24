@@ -1,5 +1,5 @@
-#ifndef POLYNOMIALPINNER_MATRIX_HH
-#define POLYNOMIALPINNER_MATRIX_HH
+#ifndef RATIONALFITTER_MATRIX_HH
+#define RATIONALFITTER_MATRIX_HH
 #include <vector>
 #include <optional>
 #include <tuple>
@@ -25,6 +25,8 @@ struct matrix
     static matrix vector(const std::vector<double>& values);
     static matrix from_values(unsigned w, unsigned h, const std::vector<double>& values);
 };
+
+bool operator==(const matrix& a, const matrix& b);
 
 double length(const matrix& m);
 std::optional<matrix> mul(const matrix& a, const matrix& b);
