@@ -264,6 +264,7 @@ polynomial simplify(const term& t)
     // roots now if possible.
     polynomial pres = polynomial::create(1.0);
 
+    bool solved_root = false;
     for(size_t i = 0; i < res.mul.size();)
     {
         const var_power& p = res.mul[i];
@@ -274,12 +275,15 @@ polynomial simplify(const term& t)
             { // We're able to solve this root now!
                 pres = multiply(pres, *p);
                 res.mul.erase(res.mul.begin()+i);
+                solved_root = true;
                 continue;
             }
         }
         ++i;
     }
-    return multiply(pres, polynomial::create(res));
+    if(solved_root)
+        return multiply(pres, polynomial::create(res));
+    return polynomial::create(res);
 }
 
 polynomial assign(const term& t, variable id, double value)
@@ -372,6 +376,14 @@ polynomial multiply(const polynomial& a, const polynomial& b)
     return simplify(res);
 }
 
+polynomial multiply(const polynomial& a, double v)
+{
+    polynomial res = a;
+    for(term& t: res.terms)
+        t.coefficient *= v;
+    return simplify(res);
+}
+
 polynomial sum(const polynomial& a, const polynomial& b)
 {
     polynomial res = a;
@@ -426,7 +438,7 @@ polynomial simplify(const polynomial& p, double zero_epsilon)
         }
         ++i;
     }
-    // The changed sums may have changed the order here. 
+    // The changed sums may have changed the order here.
     return res;
 }
 
@@ -450,6 +462,83 @@ polynomial assign(const polynomial& p, variable id, double value)
         res.terms.insert(res.terms.end(), ta.terms.begin(), ta.terms.end());
     }
     return simplify(res);
+}
+
+std::optional<polynomial> try_factor(const polynomial& p, variable id, const polynomial& root)
+{
+    polynomial factored;
+
+    if(try_get_constant_value(root) == 0)
+    {
+        // Special case: factor as x*(factored)
+        // => Try to remove a degree of x from all terms, fail if this is not
+        // possible.
+        factored = p;
+        for(term& t: factored.terms)
+        {
+            bool found_var = false;
+            for(var_power& vp: t.mul)
+            {
+                if(vp.id == id)
+                {
+                    vp.degree--;
+                    found_var = true;
+                    break;
+                }
+            }
+            if(!found_var)
+                return {};
+        }
+        return simplify(factored);
+    }
+
+    // Factor as (x-r)*(factored)
+    // 'Coefficients' contains negated coefficients by degree of the original
+    // polynomial.
+    std::vector<polynomial> coefficients;
+    for(const term& t: p.terms)
+    {
+        unsigned degree = 0;
+        term without_t;
+        without_t.coefficient = t.coefficient;
+        for(const var_power& vp: t.mul)
+        {
+            if(vp.id == id)
+                degree = std::max(degree, vp.degree);
+            else without_t.mul.push_back(vp);
+        }
+
+        if(coefficients.size() <= degree)
+            coefficients.resize(degree+1);
+        coefficients[degree].terms.push_back(without_t);
+    }
+
+    // Simplify the coefficients for good measure
+    for(polynomial& c: coefficients)
+        c = simplify(c);
+
+    polynomial prev;
+
+    for(unsigned i = 0; i < coefficients.size()-1; ++i)
+    {
+        rational rat;
+        rat.numerator = sum(prev, multiply(coefficients[i], -1.0));
+        rat.denominator = root;
+        rat = simplify(rat);
+        if(try_get_constant_value(rat.denominator) != 1)
+            return {}; // Fractional coefficient, not supported yet.
+
+        term base_term = term{1.0, {}};
+        if(i > 0) base_term.mul.push_back(var_power{id, i});
+        prev = rat.numerator;
+
+        polynomial new_term = multiply(rat.numerator, polynomial::create(base_term));
+        factored.terms.insert(factored.terms.end(), new_term.terms.begin(), new_term.terms.end());
+    }
+
+    if(prev == coefficients.back())
+        return simplify(factored);
+    else return {}; // Not a root for this polynomial.
 }
 
 std::optional<double> try_get_constant_value(const polynomial& p)
@@ -487,105 +576,371 @@ std::set<variable> live_variables(const polynomial& p)
 
 std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polynomial& p, variable id, unsigned exponent)
 {
-    unsigned max_degree = 0;
-    unsigned min_degree = UINT32_MAX;
+    roots_result roots = try_find_all_roots(p, id);
+    if(!roots.found_all)
+        return solve_failure_reason::CANT_SOLVE;
+    if(roots.roots.size() == 0)
+        return solve_failure_reason::NO_ROOTS;
+
+    bool even_exponent = (exponent&1) == 0;
+    if(!even_exponent && roots.roots.size() > 1)
+        return solve_failure_reason::MULTIPLE_ROOTS;
+
+    // Raise all roots to nth power
+    for(polynomial& root: roots.roots)
+    {
+        polynomial res = polynomial::create(1.0);
+        for(int i = 0; i < exponent; ++i)
+            res = multiply(res, root);
+        root = res;
+    }
+
+    // Ensure roots are all same.
+    for(unsigned i = 1; i < roots.roots.size(); ++i)
+    {
+        if(!(roots.roots[i-1] == roots.roots[i]))
+            return solve_failure_reason::MULTIPLE_ROOTS;
+    }
+    return roots.roots[0];
+}
+
+std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
+{
+    // Find coefficients for each degree of 'id'.
+    std::vector<polynomial> coefficients;
     for(const term& t: p.terms)
     {
+        unsigned degree = 0;
+        term without_t;
+        without_t.coefficient = t.coefficient;
         for(const var_power& vp: t.mul)
         {
             if(vp.id == id)
-            {
-                max_degree = max_degree > vp.degree ? max_degree : vp.degree;
-                min_degree = min_degree < vp.degree ? min_degree : vp.degree;
-            }
+                degree = std::max(degree, vp.degree);
+            else without_t.mul.push_back(vp);
         }
+
+        if(coefficients.size() <= degree)
+            coefficients.resize(degree+1);
+        coefficients[degree].terms.push_back(without_t);
+    }
+    if(coefficients.size() <= 1)
+    { // Never found the variable, so there isn't really a root for it.
+        return {};
     }
 
-    // Never found the variable. Any value is possible, so it's kinda useless.
-    if(min_degree > max_degree) return solve_failure_reason::INFINITE_ROOTS;
-    if(max_degree == min_degree)
-    { // Simple to solve.
-        rational rat;
-        for(const term& t: p.terms)
-        {
-            term filtered_t = t;
-            bool has_var = false;
-            for(auto it = filtered_t.mul.begin(); it != filtered_t.mul.end();)
-            {
-                if(it->id == id)
-                {
-                    has_var = true;
-                    it = filtered_t.mul.erase(it);
-                }
-                else ++it;
-            }
-            if(has_var)
-            {
-                rat.denominator.terms.push_back(filtered_t);
-            }
-            else
-            {
-                filtered_t.coefficient = -filtered_t.coefficient;
-                rat.numerator.terms.push_back(filtered_t);
-            }
-        }
+    if(try_get_constant_value(coefficients[0]) == 0)
+    { // First coefficient is zero => zero is a root.
+        return polynomial::zero();
+    }
 
+    unsigned N = coefficients.size()-1;
+    bool only_last_is_nonzero = true;
+    for(unsigned i = 1; i < coefficients.size()-1; ++i)
+    {
+        if(try_get_constant_value(coefficients[i]) != 0)
+            only_last_is_nonzero = false;
+    }
+
+    { // Remove common factors from coefficients, if present.
+        std::map<variable, int> common;
+        for(unsigned i = 0; i < coefficients.size(); ++i)
+            find_common_variables(coefficients[i], common, i != 0);
+        for(unsigned i = 0; i < coefficients.size(); ++i)
+            coefficients[i] = factor_common_variables(coefficients[i], common);
+    }
+
+    if(only_last_is_nonzero)
+    {
+        // Nth degree equation, but of the form ax^N+b=0 => trivial.
+        // This also includes 1st degree equations.
+
+        // x = Nthroot(-b/a);
+        rational rat;
+        rat.numerator = multiply(coefficients[0], -1.0);
+        rat.denominator = coefficients.back();
         rat = simplify(rat);
 
-        std::optional<double> denom_value = try_get_constant_value(rat.denominator);
-        if(!denom_value.has_value())
+        std::optional<double> a = try_get_constant_value(rat.denominator);
+        if(!a.has_value())
         {
-            // TODO: Rational functions support! Necessary! To make this work!
-            return solve_failure_reason::CANT_REPRESENT;
+            // TODO: Return rational functions instead of polynomials. This
+            // entails large structural changes.
+            return {};
         }
 
-        double inv_denom = 1.0 / *denom_value;
-        for(term& t: rat.numerator.terms)
-            t.coefficient *= inv_denom;
-
-        std::optional<double> num_value = try_get_constant_value(rat.numerator);
-
-        // If the root is zero, it's always the same, no questions asked.
-        if(num_value.has_value() && *num_value == 0)
-            return polynomial::zero();
-
-        // If the degree is even, there's two roots unless the exponent is also
-        // even.
-        bool even_degree = (max_degree & 1) == 0;
-        bool even_exponent = (exponent & 1) == 0;
-        if(even_degree && !even_exponent)
-            return solve_failure_reason::MULTIPLE_ROOTS;
-
-        if(num_value.has_value())
-        { // Constant value.
-            if(even_degree && *num_value < 0)
-                return solve_failure_reason::NO_ROOTS;
-            if(max_degree == 1)
-            { // Fast track
-                return polynomial::create(ipow(*num_value, exponent));
-            }
-            double s = even_exponent ? 1 : sign(*num_value);
-            double value = s * pow(fabs(*num_value), double(exponent)/max_degree);
-            return polynomial::create(value);
-        }
-
-        if(max_degree == 1)
-        {
-            if(exponent == 1)
-            { // Fast track
-                return rat.numerator;
-            }
-            polynomial res = polynomial::create(1.0);
-            for(int i = 0; i < exponent; ++i)
-                res = multiply(res, rat.numerator);
-            return res;
-        }
-
-        // Can't represent nth roots containing variables yet.
-        return solve_failure_reason::CANT_REPRESENT;
+        // 'simplify' above should've already normalized a = 1, so no need to
+        // divide by it.
+        return try_get_nth_root(rat.numerator, N);
     }
-    // Has multiple roots or can't be represented, so that sucks.
-    else return solve_failure_reason::CANT_SOLVE;
+    else if(coefficients.size() == 3)
+    { // Second-degree equation, solvable.
+        // ax^2 + bx + c = 0
+        //One root is:
+        // x=(-b+sqrt(b^2-4ac))/(2a)
+        polynomial discriminant = sum(
+            multiply(coefficients[1], coefficients[1]),
+            multiply(multiply(coefficients[2], coefficients[0]), -4.0)
+        );
+        std::optional<polynomial> sqrt_discriminant = try_get_nth_root(discriminant, 2);
+        if(!sqrt_discriminant.has_value())
+            return {};
+
+        rational rat;
+        rat.numerator = sum(multiply(coefficients[1], -1.0), sqrt_discriminant.value());
+        rat.denominator = multiply(coefficients[2], 2.0);
+        rat = simplify(rat);
+
+        std::optional<double> a = try_get_constant_value(rat.denominator);
+        if(!a.has_value())
+        {
+            // TODO: Return rational functions instead of polynomials. This
+            // entails large structural changes.
+            return {};
+        }
+        return rat.numerator;
+    }
+    else
+    {
+        // Find extrema by finding roots of derivative, then search for
+        // roots between zero-crossing extrema via binary search or something.
+        // This only works if deriv_roots are constant values :(
+        std::optional<polynomial> deriv = differentiate(p, id);
+        if(!deriv.has_value())
+            return {};
+        roots_result deriv_roots = try_find_all_roots(*deriv, id);
+        std::vector<double> extrema;
+        for(const polynomial& p: deriv_roots.roots)
+        {
+            std::optional<double> val = try_get_constant_value(p);
+            if(val.has_value())
+                extrema.push_back(*val);
+        }
+
+        auto eval = [&](const polynomial& p, double value)
+        {
+            return try_get_constant_value(assign(p, id, value));
+        };
+
+        auto binary_search = [&](double start, double end) -> std::optional<double>
+        {
+            std::optional<double> start_y = eval(p, start);
+            std::optional<double> end_y = eval(p, end);
+            if(!start_y.has_value() || !end_y.has_value())
+                return {};
+
+            if(*start_y < *end_y)
+            {
+                std::swap(start_y, end_y);
+                std::swap(start, end);
+            }
+            if(*start_y == 0) return start;
+            if(*end_y == 0) return end;
+
+            if(*start_y > 0 || *end_y < 0)
+                return {};
+
+            // Great, there should be a root here.
+            double mid = 0;
+            std::optional<double> mid_y;
+            for(int iter = 0; iter < 64; ++iter)
+            {
+                double mid = (start + end) * 0.5;
+                mid_y = eval(p, start);
+                if(!mid_y.has_value())
+                    break;
+                if(*mid_y > 0) end = mid;
+                if(*mid_y < 0) start = mid;
+                if(*mid_y == 0) return mid;
+            }
+            if(mid_y.has_value() && fabs(*mid_y) < 1e-16)
+                return mid;
+            return {};
+        };
+
+        // Search between extrema first
+        for(unsigned i = 1; i < extrema.size(); ++i)
+        {
+            double start = extrema[i-1];
+            double end = extrema[i];
+            std::optional<double> root = binary_search(start, end);
+            if(root.has_value())
+                return polynomial::create(*root);
+        }
+
+        // Search outside of extrema next
+        auto exterior_search = [&](double start_from) -> std::optional<double>
+        {
+            std::optional<double> start_y = eval(p, start_from);
+            std::optional<double> slope = eval(*deriv, start_from);
+            if(!slope.has_value() || !start_y.has_value())
+                return {};
+
+            if(*start_y == 0)
+                return start_from;
+
+            double search_direction = sign(*slope);
+            if(*start_y > 0) search_direction = -search_direction;
+
+            // Find search interval
+            double step_size = search_direction * 1.0;
+            double start_x = *start_y;
+            double end_x = *start_y;
+            for(int iter = 0; iter < 64; ++iter, step_size *= 4)
+            {
+                double x = start_x + step_size;
+                std::optional<double> y = eval(p, x);
+                if(!y.has_value())
+                    break;
+                if(sign(*y) != sign(*start_y))
+                { // Crossed over zero!
+                    end_x = x;
+                    break;
+                }
+                else
+                {
+                    start_x = x;
+                    start_y = y;
+                }
+            }
+
+            return binary_search(start_x, end_x);
+        };
+
+        std::optional<double> pos = exterior_search(extrema.size() == 0 ? 0 : extrema[0]-1.0);
+        if(pos.has_value()) return polynomial::create(*pos);
+
+        pos = exterior_search(extrema.size() == 0 ? 0 : extrema.back()+1.0);
+        if(pos.has_value()) return polynomial::create(*pos);
+        return {};
+    }
+}
+
+std::optional<polynomial> try_get_nth_root(const polynomial& constant, unsigned N)
+{
+    if(N == 1) return constant;
+
+    bool even_degree = (N&1) == 0;
+    std::optional<double> b = try_get_constant_value(constant);
+    if(b == 0) return polynomial::zero();
+    else if(b.has_value())
+    { // Constant value.
+        if(even_degree && *b < 0)
+            return {}; // Complex roots
+        return polynomial::create(sign(*b) * pow(fabs(*b), 1.0/N));
+    }
+
+    // Time to get desperate. If we can factor 'b' by any of its variables
+    // such that all roots are equal and the number of roots is a multiple
+    // of 'N', it's still solvable.
+    std::set<variable> live = live_variables(constant);
+    for(variable v: live)
+    {
+        roots_result roots = try_find_all_roots(constant, v);
+        if(!roots.found_all)
+            continue;
+
+        std::optional<polynomial> residual = try_get_nth_root(roots.residual, N);
+        if(!residual.has_value())
+            continue;
+
+        bool equal = true;
+        for(unsigned i = 1; i < roots.roots.size(); ++i)
+            if(!(roots.roots[i-1] == roots.roots[i]))
+                equal = false;
+        if(!equal)
+            continue;
+
+        if(roots.roots.size() > 0 && (roots.roots.size()%N) == 0)
+        {
+            // Compatible!
+            polynomial p = *residual;
+            polynomial root_expr = sum(
+                polynomial::create(term{1.0, {var_power{v, 1}}}),
+                multiply(roots.roots[0], -1.0)
+            );
+            int exp = roots.roots.size() / N;
+            for(int i = 0; i < exp; ++i)
+                p = multiply(p, root_expr);
+            return p;
+        }
+    }
+
+    return {};
+}
+
+roots_result try_find_all_roots(const polynomial& p, variable id)
+{
+    roots_result result;
+    result.found_all = false;
+    result.roots = {};
+    result.residual = p;
+    while(depends_on_var(result.residual, id))
+    {
+        std::optional<polynomial> root = try_find_any_root(result.residual, id);
+        if(!root.has_value())
+            return result;
+        std::optional<polynomial> next_residual = try_factor(result.residual, id, *root);
+        if(!next_residual.has_value())
+            return result;
+        result.roots.push_back(*root);
+        result.residual = *next_residual;
+    }
+    std::sort(result.roots.begin(), result.roots.end());
+    result.found_all = true;
+    return result;
+}
+
+void find_common_variables(const polynomial& p, std::map<variable, int>& common, bool continue_from_previous)
+{
+    if(!continue_from_previous)
+        common.clear();
+
+    bool first = !continue_from_previous;
+    for(const term& t: p.terms)
+    {
+        if(first)
+        {
+            for(const var_power& vp: t.mul)
+            {
+                if(vp.id >= 0)
+                    common[vp.id] = vp.degree;
+            }
+            first = false;
+        }
+        else
+        {
+            for(auto it = common.begin(); it != common.end();)
+            {
+                bool found = false;
+                for(const var_power& vp: t.mul)
+                {
+                    if(vp.id == it->first)
+                    {
+                        int& degree = common[vp.id];
+                        degree = degree < vp.degree ? degree : vp.degree;
+                        found = true;
+                    }
+                }
+                if(!found) it = common.erase(it);
+                else ++it;
+            }
+        }
+    }
+}
+
+polynomial factor_common_variables(const polynomial& p, const std::map<variable, int>& common)
+{
+    polynomial res = p;
+    for(term& t: res.terms)
+    {
+        for(var_power& vp: t.mul)
+        {
+            if(common.count(vp.id))
+                vp.degree -= common.at(vp.id);
+        }
+    }
+    return simplify(res);
 }
 
 bool operator<(const indeterminate_group& a, const indeterminate_group& b)
@@ -656,7 +1011,7 @@ bool pin(
     std::vector<polynomial>& target
 ){
     polynomial target_nonzero = nonzero;
-    std::map<indeterminate_group, polynomial> zero_groups = 
+    std::map<indeterminate_group, polynomial> zero_groups =
         group_by_indeterminates(zero, indeterminates, indeterminate_count);
 
     for(auto it = zero_groups.begin(); it != zero_groups.end();)
@@ -671,6 +1026,7 @@ bool pin(
             else
             {
                 // Can't set a constant factor to zero in any way.
+                printf("Constraint is unachievable due to a conflicting constant.\n");
                 return false;
             }
         }
@@ -691,6 +1047,7 @@ bool pin(
         std::optional<polynomial> best_equivalent;
         for(variable id: candidates)
         {
+            /*
             std::variant<polynomial, solve_failure_reason> root = try_solve_single_root(zero_polynomial, id, 1);
             if(polynomial* p = std::get_if<polynomial>(&root))
             {
@@ -708,7 +1065,65 @@ bool pin(
             else if(solve_failure_reason* r = std::get_if<solve_failure_reason>(&root))
             {
                 if(!best_equivalent.has_value() && *r > best_failure)
+                {
                     best_id = id;
+                    best_failure = *r;
+                }
+            }
+            */
+            roots_result roots = try_find_all_roots(zero_polynomial, id);
+
+            if(!roots.found_all)
+            { // Didn't find all roots, so this _could_ be available later.
+                solve_failure_reason reason = solve_failure_reason::CANT_SOLVE;
+                if(!best_equivalent.has_value() && reason > best_failure)
+                {
+                    best_id = id;
+                    best_failure = reason;
+                    // fallthrough intentional - we still want to try the roots
+                    // that were found, if any.
+                }
+            }
+
+            // Remove roots that are incompatible with 'nonzero'.
+            for(auto it = roots.roots.begin(); it != roots.roots.end();)
+            {
+                polynomial condition = assign(target_nonzero, id, *it);
+                if(try_get_constant_value(condition) == 0)
+                    it = roots.roots.erase(it);
+                else ++it;
+            }
+
+            if(roots.roots.size() == 0)
+            { // No suitable roots available.
+                continue;
+            }
+
+            // Ensure roots are all same.
+            bool all_equal = true;
+            for(unsigned i = 1; i < roots.roots.size(); ++i)
+            {
+                if(!(roots.roots[i-1] == roots.roots[i]))
+                    all_equal = false;
+            }
+
+            if(!all_equal)
+            { // Multiple roots, so we won't decide which one to take here.
+                solve_failure_reason reason = solve_failure_reason::MULTIPLE_ROOTS;
+                if(!best_equivalent.has_value() && reason > best_failure)
+                {
+                    best_id = id;
+                    best_failure = reason;
+                    continue;
+                }
+            }
+
+            polynomial& root = roots.roots[0];
+
+            if(!best_equivalent.has_value() || root < *best_equivalent)
+            {
+                best_equivalent = std::move(root);
+                best_id = id;
             }
         }
 
@@ -716,7 +1131,13 @@ bool pin(
         { // No good equivalent polynomial found, so resort to roots().
             // Literally no roots found or zero candidates, this sucks.
             if(best_failure <= solve_failure_reason::INFINITE_ROOTS || best_id < 0)
+            {
+                if(best_failure == solve_failure_reason::NO_ROOTS)
+                    printf("Constraint is unachievable; requires roots from equation which has none.\n");
+                if(best_failure == solve_failure_reason::INFINITE_ROOTS)
+                    printf("Constraint is unachievable; has infinitely many options.\n");
                 return false;
+            }
             best_equivalent = polynomial::roots(best_id, zero_polynomial);
         }
 

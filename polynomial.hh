@@ -5,6 +5,7 @@
 #include <variant>
 #include <map>
 #include <set>
+#include <tuple>
 
 struct polynomial;
 
@@ -48,7 +49,7 @@ struct roots_expr
 bool operator<(const roots_expr& a, const roots_expr& b);
 bool operator==(const roots_expr& a, const roots_expr& b);
 
-// This normally represents a variable to some power, e.g. x^4. However, if 
+// This normally represents a variable to some power, e.g. x^4. However, if
 // roots.has_value(), the expression is instead roots(expr)^degree. This form
 // allows elimination of variables stemming from complicated constraints.
 struct var_power
@@ -77,11 +78,18 @@ bool compatible(const var_power& a, const var_power& b);
 
 std::optional<polynomial> differentiate(const polynomial& p, variable id);
 polynomial multiply(const polynomial& a, const polynomial& b);
+polynomial multiply(const polynomial& a, double v);
 polynomial sum(const polynomial& a, const polynomial& b);
 polynomial sort(const polynomial& p); // Sorts terms by variable indices and powers.
 polynomial simplify(const polynomial& p, double zero_epsilon = 1e-10); // Merges terms with same variables and removes zero terms
 polynomial assign(const polynomial& p, variable id, const polynomial& equivalent);
 polynomial assign(const polynomial& p, variable id, double value);
+
+// Try to factor a polynomial to the form
+// (var-root) * (result_polynomial)
+// This is necessary to simplify rationals and solve nth derivative constraints
+// on them.
+std::optional<polynomial> try_factor(const polynomial& p, variable id, const polynomial& root);
 
 std::optional<double> try_get_constant_value(const polynomial& p);
 bool depends_on_var(const polynomial& p, variable id);
@@ -99,6 +107,19 @@ enum class solve_failure_reason
     MULTIPLE_ROOTS = 4
 };
 std::variant<polynomial, solve_failure_reason> try_solve_single_root(const polynomial& p, variable id, unsigned exponent);
+// This function may return _any_ of the roots of polynomial 'p' if it can.
+std::optional<polynomial> try_find_any_root(const polynomial& p, variable id);
+// List of roots + residual
+struct roots_result
+{
+    bool found_all = false;
+    std::vector<polynomial> roots;
+    polynomial residual;
+};
+roots_result try_find_all_roots(const polynomial& p, variable id);
+std::optional<polynomial> try_get_nth_root(const polynomial& constant, unsigned N);
+void find_common_variables(const polynomial& p, std::map<variable, int>& common, bool continue_from_previous = false);
+polynomial factor_common_variables(const polynomial& p, const std::map<variable, int>& common);
 
 struct indeterminate_group
 {

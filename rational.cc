@@ -37,13 +37,18 @@ rational simplify(const rational& r)
     res.numerator = simplify(r.numerator);
     res.denominator = simplify(r.denominator);
 
-    // Normalize to a Padé approximant if possible.
+    // Identical numerator and denominator, trivial to simplify.
+    if(res.numerator == res.denominator)
+        return rational{polynomial::create(1.0), polynomial::create(1.0)};
+
+    // Normalize denominator if possible.
     double factor = 0;
     for(term& t: res.denominator.terms)
     {
         if(t.mul.size() == 0)
             factor += t.coefficient;
     }
+
 
     if(fabs(factor) < 1e-10)
     {
@@ -52,47 +57,10 @@ rational simplify(const rational& r)
         // is a common variable in all terms that we can factor out.
         std::map<variable, int /*min_degree*/> common;
 
-        bool first_check = true;
-        auto check_term = [&](term& t){
-            if(first_check)
-            {
-                for(var_power& vp: t.mul)
-                {
-                    if(vp.id >= 0)
-                        common[vp.id] = vp.degree;
-                }
-                first_check = false;
-            }
-            else
-            {
-                for(auto it = common.begin(); it != common.end();)
-                {
-                    bool found = false;
-                    for(var_power& vp: t.mul)
-                    {
-                        if(vp.id == it->first)
-                        {
-                            int degree = common[vp.id];
-                            degree = degree < vp.degree ? degree : vp.degree;
-                            found = true;
-                        }
-                    }
-                    if(!found) it = common.erase(it);
-                    else ++it;
-                }
-            }
-        };
-        auto factor_term = [&](term& t){
-            for(var_power& vp: t.mul)
-            {
-                if(common.count(vp.id))
-                    vp.degree -= common[vp.id];
-            }
-        };
-        for(term& t: res.numerator.terms) check_term(t);
-        for(term& t: res.denominator.terms) check_term(t);
-        for(term& t: res.numerator.terms) factor_term(t);
-        for(term& t: res.denominator.terms) factor_term(t);
+        find_common_variables(res.numerator, common, false);
+        find_common_variables(res.denominator, common, true);
+        res.numerator = factor_common_variables(res.numerator, common);
+        res.denominator = factor_common_variables(res.denominator, common);
 
         // Factoring out the common variables may have revealed a new constant,
         // so let's just re-simplify the whole thing.
