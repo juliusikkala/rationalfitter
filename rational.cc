@@ -49,31 +49,47 @@ rational simplify(const rational& r)
             factor += t.coefficient;
     }
 
-
-    if(fabs(factor) < 1e-10)
-    {
-        // Yikes; looks like we don't have a constant in the denominator.
-        // This does luckily present an opportunity: it's possible that there
-        // is a common variable in all terms that we can factor out.
-        std::map<variable, int /*min_degree*/> common;
-
-        find_common_variables(res.numerator, common, false);
-        find_common_variables(res.denominator, common, true);
-        res.numerator = factor_common_variables(res.numerator, common);
-        res.denominator = factor_common_variables(res.denominator, common);
-
-        // Factoring out the common variables may have revealed a new constant,
-        // so let's just re-simplify the whole thing.
-        return common.size() > 0 ? simplify(res) : res;
-    }
-    else
+    bool has_constant_factor = fabs(factor) > 1e-10;
+    if(has_constant_factor)
     {
         for(term& t: res.numerator.terms)
             t.coefficient /= factor;
         for(term& t: res.denominator.terms)
             t.coefficient /= factor;
-        return res;
     }
+
+    // Find common factors to remove
+    std::set<variable> live = live_variables(res.numerator);
+    live.merge(live_variables(res.denominator));
+    bool factored = false;
+    for(variable id: live)
+    {
+        roots_result num_roots = try_find_all_roots(res.numerator, id);
+        for(polynomial& num_root: num_roots.roots)
+        {
+            std::optional<polynomial> denom_factored = try_factor(res.denominator, id, num_root);
+            if(!denom_factored.has_value()) continue;
+            std::optional<polynomial> num_factored = try_factor(res.numerator, id, num_root);
+            if(!num_factored.has_value()) continue;
+            res.denominator = *denom_factored;
+            res.numerator = *num_factored;
+            factored = true;
+        }
+        roots_result denom_roots = try_find_all_roots(res.denominator, id);
+        for(polynomial& denom_root: denom_roots.roots)
+        {
+            std::optional<polynomial> denom_factored = try_factor(res.denominator, id, denom_root);
+            if(!denom_factored.has_value()) continue;
+            std::optional<polynomial> num_factored = try_factor(res.numerator, id, denom_root);
+            if(!num_factored.has_value()) continue;
+            res.denominator = *denom_factored;
+            res.numerator = *num_factored;
+            factored = true;
+        }
+    }
+
+    if(factored) return simplify(res);
+    return res;
 }
 
 rational assign(const rational& r, variable id, double value)

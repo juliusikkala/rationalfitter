@@ -570,7 +570,11 @@ std::set<variable> live_variables(const polynomial& p)
     std::set<variable> variables;
     for(const term& t: p.terms)
     for(const var_power& vp: t.mul)
+    {
+        if(vp.roots.has_value())
+            continue;
         variables.insert(vp.id);
+    }
     return variables;
 }
 
@@ -1031,15 +1035,7 @@ bool pin(
             }
         }
 
-        std::set<variable> candidates;
-        for(term& t: zero_polynomial.terms)
-        for(var_power& vp: t.mul)
-        {
-            // roots-expressions are treated as constants.
-            if(vp.roots.has_value())
-                continue;
-            candidates.insert(vp.id);
-        }
+        std::set<variable> candidates = live_variables(zero_polynomial);
 
         // Find simplest equivalent expression.
         variable best_id = -1;
@@ -1047,30 +1043,6 @@ bool pin(
         std::optional<polynomial> best_equivalent;
         for(variable id: candidates)
         {
-            /*
-            std::variant<polynomial, solve_failure_reason> root = try_solve_single_root(zero_polynomial, id, 1);
-            if(polynomial* p = std::get_if<polynomial>(&root))
-            {
-                if(!best_equivalent.has_value() || *p < *best_equivalent)
-                {
-                    // Check non-zero condition.
-                    polynomial condition = assign(target_nonzero, id, *p);
-                    if(try_get_constant_value(condition) != 0)
-                    {
-                        best_equivalent = std::move(*p);
-                        best_id = id;
-                    }
-                }
-            }
-            else if(solve_failure_reason* r = std::get_if<solve_failure_reason>(&root))
-            {
-                if(!best_equivalent.has_value() && *r > best_failure)
-                {
-                    best_id = id;
-                    best_failure = *r;
-                }
-            }
-            */
             roots_result roots = try_find_all_roots(zero_polynomial, id);
 
             if(!roots.found_all)
