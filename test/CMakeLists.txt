@@ -7,3 +7,4 @@ endfunction()
 
 test(math-test math.cc)
 test(matrix-test matrix.cc)
+test(polynomial-test polynomial.cc)
