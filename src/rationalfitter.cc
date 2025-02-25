@@ -1087,40 +1087,40 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         if(as_named_params(parameters.data(), parameters.size(), named_params))
             return false;
 
+        unsigned maxiterations = 100;
+        float convergence = 0.01;
+        float step = 0.1;
+        NAMED_PARAM(maxiterations, false);
+        NAMED_PARAM(step, false);
+        NAMED_PARAM(convergence, false);
+
         size_t data_size = SIZE_MAX;
         std::map<variable, const double*> variable_data;
         std::map<variable, double> initial_guesses;
         for(auto& pair: named_params)
         {
-            if(pair.first == "max-loss")
+            if(ctx.name_vars.count(pair.first) == 0)
             {
-                // TODO: automated coefficient removal
+                fprintf(stderr, "Unknown variable %s\n", pair.first.c_str());
+                return false;
             }
-            else
+            variable var = ctx.name_vars.at(pair.first);
+
+            if(const std::string* dataset_name = std::get_if<std::string>(&pair.second))
             {
-                if(ctx.name_vars.count(pair.first) == 0)
+                if(ctx.datasets.count(*dataset_name) == 0)
                 {
-                    fprintf(stderr, "Unknown variable %s\n", pair.first.c_str());
+                    fprintf(stderr, "No such dataset: %s\n", dataset_name->c_str());
                     return false;
                 }
-                variable var = ctx.name_vars.at(pair.first);
+                std::vector<double>& dataset = ctx.datasets.at(*dataset_name);
 
-                if(const std::string* dataset_name = std::get_if<std::string>(&pair.second))
-                {
-                    if(ctx.datasets.count(*dataset_name) == 0)
-                    {
-                        fprintf(stderr, "No such dataset: %s\n", dataset_name->c_str());
-                        return false;
-                    }
-                    std::vector<double>& dataset = ctx.datasets.at(*dataset_name);
-
-                    variable_data[var] = dataset.data();
-                    data_size = std::min(data_size, dataset.size());
-                }
-                else if(const double* guess = std::get_if<double>(&pair.second))
-                {
-                    initial_guesses[var] = *guess;
-                }
+                variable_data[var] = dataset.data();
+                data_size = std::min(data_size, dataset.size());
+            }
+            else if(const double* guess = std::get_if<double>(&pair.second))
+            {
+                initial_guesses[var] = *guess;
             }
         }
 
@@ -1139,7 +1139,10 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             ctx.axes.back(),
             variable_data,
             data_size,
-            initial_guesses
+            initial_guesses,
+            step,
+            maxiterations,
+            convergence
         );
         if(!result.has_value())
         {
