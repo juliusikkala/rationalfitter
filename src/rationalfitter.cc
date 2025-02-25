@@ -1088,15 +1088,22 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
 
         unsigned maxiterations = 100;
-        float convergence = 0.01;
-        float step = 0.1;
+        unsigned eliminate = 0;
+        double maxloss = 0;
+        double convergence = 0.01;
+        double step = 0.1;
         NAMED_PARAM(maxiterations, false);
         NAMED_PARAM(step, false);
         NAMED_PARAM(convergence, false);
+        NAMED_PARAM(eliminate, false);
+        NAMED_PARAM(maxloss, false);
 
-        size_t data_size = SIZE_MAX;
-        std::map<variable, const double*> variable_data;
-        std::map<variable, double> initial_guesses;
+        fit_params params;
+        params.right_side_variable = ctx.axes.back();
+        params.data_size = SIZE_MAX;
+        params.nlls_step_size = step;
+        params.nlls_max_iterations = maxiterations;
+        params.nlls_convergence_limit = convergence;
         for(auto& pair: named_params)
         {
             if(ctx.name_vars.count(pair.first) == 0)
@@ -1115,16 +1122,16 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 }
                 std::vector<double>& dataset = ctx.datasets.at(*dataset_name);
 
-                variable_data[var] = dataset.data();
-                data_size = std::min(data_size, dataset.size());
+                params.data[var] = dataset.data();
+                params.data_size = std::min(params.data_size, dataset.size());
             }
             else if(const double* guess = std::get_if<double>(&pair.second))
             {
-                initial_guesses[var] = *guess;
+                params.initial_guesses[var] = *guess;
             }
         }
 
-        if(variable_data.count(ctx.axes.back()) == 0)
+        if(params.data.count(ctx.axes.back()) == 0)
         {
             fprintf(
                 stderr,
@@ -1134,21 +1141,46 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
         }
 
-        std::optional<rational> result = fit(
-            ctx.r,
-            ctx.axes.back(),
-            variable_data,
-            data_size,
-            initial_guesses,
-            step,
-            maxiterations,
-            convergence
-        );
+        std::optional<rational> result = fit(ctx.r, params);
+        double baseline_loss = l2_loss(*result, params).value_or(-1.0);
+        if(eliminate != 0 || maxloss != 0)
+            printf("Baseline loss: %f\n", baseline_loss);
+
+        std::vector<variable> eliminated_variables;
+        for(; eliminate > 0 || maxloss != 0; --eliminate)
+        {
+            std::optional<rational> candidate = fit_eliminate_variable(ctx.r, params, eliminated_variables);
+            if(eliminated_variables.size() > 0 && candidate.has_value())
+            {
+                double loss = l2_loss(*candidate, params).value_or(-1.0);
+                variable eliminated = eliminated_variables.back();
+                const char* eliminated_name = ctx.var_names[eliminated].c_str();
+                if(maxloss != 0 && loss > maxloss)
+                {
+                    printf(
+                        "Not eliminating variable %s, loss %f exceeds maxloss %f\n",
+                        eliminated_name, loss, maxloss
+                    );
+                    break;
+                }
+                result = candidate;
+                printf(
+                    "Eliminated variable %s, current loss %f\n",
+                    eliminated_name, loss
+                );
+            }
+            else break;
+        }
+
         if(!result.has_value())
         {
             fprintf(stderr, "Fit failed; try eliminating roots() expressions first.\n");
             return false;
         }
+
+        std::optional<double> loss = l2_loss(*result, params);
+        if(loss.has_value())
+            printf("Final L2 loss: %f\n", *loss);
         ctx.r = *result;
         return true;
     }},
