@@ -10,8 +10,8 @@ elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
    add_compile_options(-fcolor-diagnostics)
 endif()
 
-add_compile_options(-fprofile-arcs -ftest-coverage)
-add_link_options(-fprofile-arcs -ftest-coverage)
+#add_compile_options(-fprofile-arcs -ftest-coverage)
+#add_link_options(-fprofile-arcs -ftest-coverage)
 
 # Core is built as a "library" so that it's easier to link to test programs.
 add_library(fit-core OBJECT src/polynomial.cc src/rational.cc src/matrix.cc src/optimization.cc)

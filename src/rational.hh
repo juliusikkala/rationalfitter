@@ -15,5 +15,6 @@ rational assign(const rational& r, variable id, double value);
 std::set<variable> live_variables(const rational& r);
 
 polynomial get_zero_polynomial(const rational& r, double right_side);
+std::optional<double> evaluate(const rational& r, const std::vector<double>& variable_values);
 
 #endif

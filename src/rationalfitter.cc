@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <vector>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <cstring>
 #include <functional>
@@ -28,10 +29,11 @@ struct context
     std::map<std::string, variable> name_vars;
     std::vector<variable> axes;
     std::vector<variable> coefficients;
+    std::map<std::string, std::vector<double>> datasets;
     rational r;
 };
 
-bool read_text_file(const char* path, std::string& data)
+bool read_binary_file(const char* path, std::vector<uint8_t>& data)
 {
     FILE* f = fopen(path, "rb");
 
@@ -49,6 +51,16 @@ bool read_text_file(const char* path, std::string& data)
     }
     fclose(f);
 
+    return true;
+}
+
+bool read_text_file(const char* path, std::string& data)
+{
+    std::vector<uint8_t> bdata;
+    if(!read_binary_file(path, bdata))
+        return false;
+    bdata.push_back(0);
+    data = (const char*)bdata.data();
     return true;
 }
 
@@ -79,7 +91,7 @@ std::string term_to_string(
     bool show_coefficient = false;
     if(coefficient != 1 || t.mul.size() == 0)
     {
-        ret += is_integer(coefficient) ? 
+        ret += is_integer(coefficient) ?
             std::to_string(int64_t(coefficient)) :
             std::to_string(coefficient);
         show_coefficient = true;
@@ -116,7 +128,7 @@ std::string polynomial_to_string(
     const char* pow_symbol
 ){
     std::vector<variable>& indeterminates = group_by_axes ? ctx.axes : ctx.coefficients;
-    std::map<indeterminate_group, polynomial> groups = 
+    std::map<indeterminate_group, polynomial> groups =
         group_by_indeterminates(p, indeterminates.data(), indeterminates.size());
 
     bool first_line = true;
@@ -287,7 +299,7 @@ std::string rational_to_numpy(
     if(try_get_constant_value(r.denominator) != 1.0)
         return "(numpy fitting code output for rationals is not supported yet)";
     const polynomial& p = r.numerator;
-    std::map<indeterminate_group, polynomial> groups = 
+    std::map<indeterminate_group, polynomial> groups =
         group_by_indeterminates(p, ctx.coefficients.data(), ctx.coefficients.size());
     std::string code;
 
@@ -362,7 +374,7 @@ bool assign_axis_names(context& ctx, const std::vector<std::string>& axis_names)
     ctx.name_vars.clear();
     for(size_t i = 0; i < axis_names.size(); ++i)
     {
-        variable id = (1<<20)+i;
+        variable id = i;
         ctx.axes.push_back(id);
         ctx.var_names[id] = axis_names[i];
         if(ctx.name_vars.count(axis_names[i]))
@@ -444,15 +456,86 @@ bool read_double(const char*& str, double& d)
     else return false;
 }
 
-std::string read_token(const char*& str)
+std::string read_string(const char*& str)
 {
     std::string token;
-    while(*str && strchr(" =\t\n", *str) == nullptr)
+    if(*str == '"')
     {
-        token += *str;
-        str++;
+        // String with quotes; parse until next unescaped quote. This is mostly
+        // for filenames, so we don't care about other escape codes.
+        bool escaped = false;
+        ++str;
+        while(*str)
+        {
+            if(!escaped)
+            {
+                if(*str == '\\')
+                {
+                    escaped = true;
+                    ++str;
+                    continue;
+                }
+                else if(*str == '"')
+                {
+                    ++str;
+                    break;
+                }
+            }
+            else escaped = false;
+            token += *str;
+            str++;
+        }
+    }
+    else
+    { // String without quotes; parse until next whitespace or =
+        while(*str && strchr(" =\t\n", *str) == nullptr)
+        {
+            token += *str;
+            str++;
+        }
     }
     return token;
+}
+
+template<typename F>
+void read_csv(const char*& csv_str, char delimiter, F&& entry_callback, unsigned max_rows = UINT32_MAX)
+{
+    unsigned cur_column = 0;
+    unsigned cur_row = 0;
+    std::string cur_entry = "";
+    std::string trailing_space = "";
+    while(*csv_str)
+    {
+        char c = *csv_str;
+        csv_str++;
+        if(c == delimiter || c == '\n')
+        {
+            if(entry_callback(cur_column, cur_row, cur_entry.c_str()))
+                return;
+            cur_entry.clear();
+            trailing_space.clear();
+            if(c == '\n')
+            {
+                cur_column = 0;
+                cur_row++;
+            }
+            else cur_column++;
+            if(cur_row == max_rows) break;
+        }
+        else
+        {
+            if(cur_entry.size() == 0 && c == ' ')
+                continue;
+            if(c == ' ')
+                trailing_space += c;
+            else
+            {
+                cur_entry += trailing_space;
+                trailing_space.clear();
+                cur_entry += c;
+            }
+        }
+    }
 }
 
 using parameter = std::variant<std::string, double>;
@@ -471,7 +554,10 @@ int get_params(const parameter* parameters, size_t param_count, U& first, T&... 
         return 1; // Argument count mismatch.
 
     if constexpr(
-        std::is_same_v<U, int> ||
+        std::is_same_v<U, int32_t> ||
+        std::is_same_v<U, uint32_t> ||
+        std::is_same_v<U, int64_t> ||
+        std::is_same_v<U, uint64_t> ||
         std::is_same_v<U, float> ||
         std::is_same_v<U, double>
     ){
@@ -509,6 +595,72 @@ int get_params(const parameter* parameters, size_t param_count, U& first, T&... 
     return get_params(parameters+1, param_count-1, rest...);
 }
 
+int as_named_params(const parameter* parameters, size_t param_count, std::map<std::string, parameter>& params)
+{
+    std::string param_name;
+    for(size_t i = 0; i < param_count; ++i)
+    {
+        if(param_name.empty())
+        {
+            if(const std::string* val = std::get_if<std::string>(&parameters[i]))
+            {
+                param_name = *val;
+            }
+            else
+            {
+                fprintf(stderr, "Expected parameter name, got number\n");
+                return 2; // Argument type mismatch.
+            }
+        }
+        else
+        {
+            params[param_name] = parameters[i];
+            param_name.clear();
+        }
+    }
+    if(!param_name.empty())
+    {
+        fprintf(stderr, "Missing value for given parameter %s\n", param_name.c_str());
+        return 1;
+    }
+    return 0;
+}
+
+template<typename T>
+bool get_named_param(std::map<std::string, parameter>& params, const std::string& name, T& into, bool required = false)
+{
+    if(params.count(name))
+    {
+        parameter p = params[name];
+        params.erase(name);
+        if(get_params(&p, 1, into))
+        {
+            fprintf(stderr, "Argument type mismatch for %s\n", name.c_str());
+            return false;
+        }
+        return true;
+    }
+    if(required)
+    {
+        fprintf(stderr, "Missing required parameter %s\n", name.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool check_excess_named_params(const std::map<std::string, parameter>& params)
+{
+    bool had_excess = false;
+
+    for(const auto& pair: params)
+    {
+        fprintf(stderr, "Unrecognized parameter %s\n", pair.first.c_str());
+        had_excess = true;
+    }
+
+    return had_excess;
+}
+
 template<typename... T>
 int va_sizeof(T&... rest) {return sizeof...(rest);}
 
@@ -537,7 +689,51 @@ int va_sizeof(T&... rest) {return sizeof...(rest);}
         }\
     }\
 
+#define NAMED_PARAM(name, required) \
+    {\
+        if(!get_named_param(named_params, #name, name, required))\
+            return false; \
+    }
+
 using command_handler = std::function<bool(context&, const std::vector<parameter>& parameters)>;
+
+template<typename T>
+bool load_typed_dataset(context& ctx, const std::vector<parameter>& parameters)
+{
+    std::map<std::string, parameter> named_params;
+    if(as_named_params(parameters.data(), parameters.size(), named_params))
+        return false;
+
+    std::string dataset;
+    std::string path;
+    uint64_t offset = 0;
+    uint64_t stride = sizeof(T);
+    NAMED_PARAM(dataset, true);
+    NAMED_PARAM(path, true);
+    NAMED_PARAM(offset, false);
+    NAMED_PARAM(stride, false);
+
+    std::vector<uint8_t> data;
+    if(!read_binary_file(path.c_str(), data))
+    {
+        fprintf(stderr, "Failed to open %s\n", path.c_str());
+        return false;
+    }
+
+    if(stride == 0) stride = sizeof(T);
+
+    std::vector<double> values;
+    for(; offset+sizeof(T) <= data.size(); offset += stride)
+    {
+        T f;
+        memcpy(&f, data.data()+offset, sizeof(T));
+        values.push_back((double)f);
+    }
+
+    ctx.datasets[dataset] = values;
+
+    return true;
+}
 
 const std::unordered_map<std::string, command_handler> command_handlers = {
     {"print", [](context& ctx, const std::vector<parameter>& parameters)->bool
@@ -557,7 +753,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             }
             else
             {
-                printf("Unrecognized argument\n");
+                fprintf(stderr, "Unrecognized argument\n");
                 return false;
             }
         }
@@ -586,24 +782,24 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         PARAMS(degree, axis_names);
         if(degree < 0)
         {
-            printf("Degree must be a positive integer!\n");
+            fprintf(stderr, "Degree must be a positive integer!\n");
             return false;
         }
 
         int dimension = int(axis_names.size())-1;
         if(dimension <= 0)
         {
-            printf("Dimensions must be greater than zero!\n");
+            fprintf(stderr, "Dimensions must be greater than zero!\n");
             return false;
         }
         bool success = assign_axis_names(ctx, axis_names);
         if(!success)
             return false;
 
-        variable var_counter = 0;
+        variable var_counter = ctx.axes.size();
         ctx.r.numerator = polynomial::create(ctx.axes.data(), dimension, degree, var_counter);
         ctx.r.denominator = polynomial::create(1);
-        for(variable i = 0; i < var_counter; ++i)
+        for(variable i = ctx.axes.size(); i < var_counter; ++i)
             ctx.coefficients.push_back(i);
         assign_variable_names(ctx);
         return true;
@@ -616,24 +812,24 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         PARAMS(num_degree, denom_degree, axis_names);
         if(num_degree < 0 || denom_degree < 0)
         {
-            printf("Degree must be a positive integer!\n");
+            fprintf(stderr, "Degree must be a positive integer!\n");
             return false;
         }
 
         int dimension = int(axis_names.size())-1;
         if(dimension <= 0)
         {
-            printf("Dimensions must be greater than zero!\n");
+            fprintf(stderr, "Dimensions must be greater than zero!\n");
             return false;
         }
         bool success = assign_axis_names(ctx, axis_names);
         if(!success)
             return false;
 
-        variable var_counter = 0;
+        variable var_counter = ctx.axes.size();
         ctx.r.numerator = polynomial::create(ctx.axes.data(), dimension, num_degree, var_counter);
         ctx.r.denominator = polynomial::create(ctx.axes.data(), dimension, denom_degree, var_counter, true);
-        for(variable i = 0; i < var_counter; ++i)
+        for(variable i = ctx.axes.size(); i < var_counter; ++i)
             ctx.coefficients.push_back(i);
         assign_variable_names(ctx);
         return true;
@@ -645,7 +841,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         PARAMS(name, value);
         if(!ctx.name_vars.count(name))
         {
-            printf("No such variable: %s\n", name.c_str());
+            fprintf(stderr, "No such variable: %s\n", name.c_str());
             return false;
         }
         variable id = ctx.name_vars[name];
@@ -659,14 +855,14 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
 
         if(!ctx.name_vars.count(name))
         {
-            printf("No such variable: %s\n", name.c_str());
+            fprintf(stderr, "No such variable: %s\n", name.c_str());
             return false;
         }
         variable id = ctx.name_vars[name];
         std::optional<rational> result = differentiate(ctx.r, id);
         if(!result.has_value())
         {
-            printf("Differentiation failed for %s\n", rational_to_string(ctx, ctx.r, true, false).c_str());
+            fprintf(stderr, "Differentiation failed for %s\n", rational_to_string(ctx, ctx.r, true, false).c_str());
             return false;
         }
         ctx.r = *result;
@@ -696,7 +892,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             int res = get_params(parameters.data()+i, std::min(parameters.size()-i, 2lu), label, value);
             if(res != 0)
             {
-                printf("Pin parameters must be in the format [']<axis>=<value>.\n");
+                fprintf(stderr, "Pin parameters must be in the format [']<axis>=<value>.\n");
                 return false;
             }
 
@@ -713,7 +909,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 }
                 if(!ctx.name_vars.count(name))
                 {
-                    printf("Can't differentiate over unknown variable %s!\n", name);
+                    fprintf(stderr, "Can't differentiate over unknown variable %s!\n", name);
                     return false;
                 }
                 oc.id = ctx.name_vars[name];
@@ -725,7 +921,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 ic.value = value;
                 if(!ctx.name_vars.count(name))
                 {
-                    printf("Can't constrain over unknown variable %s!\n", name);
+                    fprintf(stderr, "Can't constrain over unknown variable %s!\n", name);
                     return false;
                 }
                 ic.id = ctx.name_vars[name];
@@ -743,7 +939,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 std::optional<rational> res = differentiate(zero, o.id);
                 if(!res.has_value())
                 {
-                    printf("Differentiation failed!\n");
+                    fprintf(stderr, "Differentiation failed!\n");
                     return false;
                 }
                 zero = *res;
@@ -756,7 +952,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             std::vector<polynomial> vec = {target.numerator, target.denominator};
             if(!pin(zero_poly, zero.denominator, ctx.axes.data(), ctx.axes.size()-1, vec))
             {
-                printf("Pinning failed!\n");
+                fprintf(stderr, "Pinning failed!\n");
                 return false;
             }
             target.numerator = vec[0];
@@ -772,6 +968,114 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         assign_variable_names(ctx);
         return true;
     }},
+    {"load-float", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    { return load_typed_dataset<float>(ctx, parameters); }},
+    {"load-double", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    { return load_typed_dataset<double>(ctx, parameters); }},
+    {"load-int32", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    { return load_typed_dataset<int32_t>(ctx, parameters); }},
+    {"load-int64", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    { return load_typed_dataset<int64_t>(ctx, parameters); }},
+    {"load-csv", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    {
+        std::map<std::string, parameter> named_params;
+        if(as_named_params(parameters.data(), parameters.size(), named_params))
+            return false;
+
+        std::string dataset;
+        std::string path;
+        parameter column;
+        std::string delimiter = ";";
+        NAMED_PARAM(dataset, true);
+        NAMED_PARAM(path, true);
+        NAMED_PARAM(column, false);
+        NAMED_PARAM(delimiter, false);
+
+        if(delimiter.size() != 1)
+        {
+            fprintf(stderr, "CSV delimiter must be a single ASCII character\n");
+            return false;
+        }
+        char delimiter_char = delimiter[0];
+
+        std::string csv;
+        if(!read_text_file(path.c_str(), csv))
+        {
+            fprintf(stderr, "Failed to open %s\n", path.c_str());
+            return false;
+        }
+
+
+        const char* csv_str = csv.c_str();
+        int column_index = 0;
+        if(const std::string* column_name = std::get_if<std::string>(&column))
+        { // Read header to figure out which column we want
+
+            bool column_found = false;
+            read_csv(csv_str, delimiter_char,
+                [&](unsigned column, unsigned , const char* cur_entry){
+                    if(cur_entry == *column_name)
+                    {
+                        column_index = column;
+                        column_found = true;
+                    }
+                    return false;
+                },
+                1
+            );
+            if(!column_found)
+            {
+                fprintf(stderr, "Couldn't find CSV column %s\n", column_name->c_str());
+                return false;
+            }
+        }
+        else if(const double* c = std::get_if<double>(&column))
+        { // Great, we were given a column index so we can just read that.
+            column_index = *c;
+        }
+
+        // If column is empty, assume this is a line-separated list of floats.
+        std::vector<double> data;
+        bool failed = false;
+        read_csv(csv_str, delimiter_char,
+            [&](unsigned column, unsigned, const char* cur_entry){
+                if(column == column_index)
+                {
+                    double value;
+                    if(!read_double(cur_entry, value) || *cur_entry != 0)
+                    {
+                        fprintf(stderr, "Failed to parse float: %s\n", cur_entry);
+                        failed = true;
+                        return true;
+                    }
+                    data.push_back(value);
+                }
+                return false;
+            }
+        );
+
+        if(failed) return false;
+
+        ctx.datasets[dataset] = data;
+
+        return true;
+    }},
+    {"dump-dataset", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    {
+        std::string name;
+        PARAMS(name);
+        if(ctx.datasets.count(name) == 0)
+        {
+            fprintf(stderr, "No such dataset: %s\n", name.c_str());
+            return false;
+        }
+        const std::vector<double>& data = ctx.datasets.at(name);
+        for(double value: data)
+        {
+            printf("%f\n", value);
+        }
+        return true;
+    }}
 };
 
 int main(int argc, char** argv)
@@ -827,14 +1131,14 @@ int main(int argc, char** argv)
                 double d;
                 if(!read_double(command_list, d))
                 {
-                    fprintf(stderr, "Failed to parse number: %s\n", read_token(command_list).c_str());
+                    fprintf(stderr, "Failed to parse number: %s\n", read_string(command_list).c_str());
                     return 3;
                 }
                 else parameters.push_back(d);
             }
             else
             {
-                std::string token = read_token(command_list);
+                std::string token = read_string(command_list);
                 parameters.push_back(token);
             }
             skip_spaces(command_list);

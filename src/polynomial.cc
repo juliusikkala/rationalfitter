@@ -464,6 +464,60 @@ polynomial assign(const polynomial& p, variable id, double value)
     return simplify(res);
 }
 
+std::optional<double> evaluate(const term& t, const std::vector<double>& variable_values)
+{
+    double product = t.coefficient;
+    for(const var_power& vp: t.mul)
+    {
+        double value = 0.0;
+        if(vp.roots.has_value())
+        {
+            // Uh oh, a roots expression... This needs symbolic evaluation and
+            // can be very costly.
+            polynomial assigned = vp.roots->expr;
+            for(unsigned id = 0; id < variable_values.size(); ++id)
+            {
+                // Don't replace the variable we're solving for.
+                if(id == vp.roots->var)
+                    continue;
+                assigned = assign(assigned, id, variable_values[id]);
+            }
+
+            assigned = simplify(assigned);
+            std::variant<polynomial, solve_failure_reason> result = try_solve_single_root(assigned, vp.roots->var, vp.degree);
+            if(polynomial* p = std::get_if<polynomial>(&result))
+            {
+                std::optional<double> opt_value = try_get_constant_value(*p);
+                if(!opt_value.has_value())
+                    return {};
+                value = *opt_value;
+            }
+            else return {};
+        }
+        else if(vp.id < variable_values.size())
+        {
+            value = ipow(variable_values[vp.id], vp.degree);
+        }
+        else return {};
+
+        product *= value;
+    }
+    return product;
+}
+
+std::optional<double> evaluate(const polynomial& p, const std::vector<double>& variable_values)
+{
+    double sum = 0.0;
+    for(const term& t: p.terms)
+    {
+        std::optional<double> value = evaluate(t, variable_values);
+        if(!value.has_value())
+            return {};
+        sum += *value;
+    }
+    return sum;
+}
+
 std::optional<polynomial> try_factor(const polynomial& p, variable id, const polynomial& root)
 {
     polynomial factored;

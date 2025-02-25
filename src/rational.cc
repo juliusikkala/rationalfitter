@@ -120,3 +120,14 @@ polynomial get_zero_polynomial(const rational& r, double right_side)
 
     return simplify(res);
 }
+
+std::optional<double> evaluate(const rational& r, const std::vector<double>& variable_values)
+{
+    std::optional<double> num_value = evaluate(r.numerator, variable_values);
+    std::optional<double> denom_value = evaluate(r.denominator, variable_values);
+    if(!num_value.has_value() || !denom_value.has_value())
+        return {};
+    if(*denom_value == 0)
+        return {};
+    return *num_value / *denom_value;
+}

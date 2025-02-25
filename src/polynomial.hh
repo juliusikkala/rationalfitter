@@ -85,6 +85,13 @@ polynomial simplify(const polynomial& p, double zero_epsilon = 1e-10); // Merges
 polynomial assign(const polynomial& p, variable id, const polynomial& equivalent);
 polynomial assign(const polynomial& p, variable id, double value);
 
+
+// There's two ways this can fail: either 't' contains 'roots' expressions that
+// cannot be solved or has multiple solutions, or 'variable_values' doesn't
+// actually contain a value for each live variable.
+std::optional<double> evaluate(const term& t, const std::vector<double>& variable_values);
+std::optional<double> evaluate(const polynomial& p, const std::vector<double>& variable_values);
+
 // Try to factor a polynomial to the form
 // (var-root) * (result_polynomial)
 // This is necessary to simplify rationals and solve nth derivative constraints
