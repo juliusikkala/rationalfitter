@@ -12,18 +12,6 @@
 #include <map>
 #include <set>
 
-const char* command_list_format = R"(Command list format:
-'#' starts a comment row and is not parsed.
-
-'polynomial <degree> <in-axes> <out-axis>' initializes a polynomial.
-'pin x=<a> y=<b>' makes the polynomial equal to 'b' at 'a'.
-'print [multiline] [lc]' prints the current state of the polynomial.
-    'multiline' makes it split each term on a new line, and 'lc' reformats the
-    polynomial as a linear combination.
-'differentiate <axis>' differentiates the expression along given axis.
-'let <axis>=<value>' replaces <axis> from expression using given <value>.
-)";
-
 struct context
 {
     std::map<variable, std::string> var_names;
@@ -291,79 +279,6 @@ std::string rational_to_c(
     {
         code += "    return num;\n}";
     }
-    return code;
-}
-
-std::string rational_to_numpy(
-    context& ctx, const rational& r
-){
-    if(try_get_constant_value(r.denominator) != 1.0)
-        return "(numpy fitting code output for rationals is not supported yet)";
-    const polynomial& p = r.numerator;
-    std::map<indeterminate_group, polynomial> groups =
-        group_by_indeterminates(p, ctx.coefficients.data(), ctx.coefficients.size());
-    std::string code;
-
-    code += "import numpy as np\n\n";
-    code += "def fit(";
-
-    for(unsigned i = 0; i < ctx.axes.size(); ++i)
-    {
-        if(i != 0)
-            code += ", ";
-        code += ctx.var_names[ctx.axes[i]]+"_data";
-    }
-    code += "):\n";
-
-    for(unsigned i = 0; i < ctx.axes.size(); ++i)
-    {
-        const std::string& name = ctx.var_names[ctx.axes[i]];
-        code += "    "+name+" = "+name+"_data.flatten()\n";
-    }
-
-    code += "    offset = ";
-    indeterminate_group constant_group;
-    if(groups.count(constant_group))
-    {
-        polynomial& group_polynomial = groups[constant_group];
-        std::set<variable> live = live_variables(group_polynomial);
-        std::string poly_str = polynomial_to_string(ctx, group_polynomial, false, false, "**");
-
-        if(live.size() != 0)
-            code += poly_str+"\n";
-        else
-            code += "np.ones("+ctx.var_names[ctx.axes[0]]+".shape) * ("+poly_str+")\n";
-    }
-    else
-    {
-        code += "np.zeros("+ctx.var_names[ctx.axes[0]]+".shape)\n";
-    }
-    code += "    b = "+ctx.var_names[ctx.axes.back()]+" - offset\n";
-    code += "    A = np.array([\n";
-
-    for(auto it = groups.begin(); it != groups.end();)
-    {
-        // Skip constants here.
-        if(it->first.indeterminates.size() == 0)
-        {
-            ++it;
-            continue;
-        }
-        std::string poly_str = polynomial_to_string(ctx, it->second, false, false, "**");
-        term indeterminate_term = term{1, it->first.indeterminates};
-        code += "        " + poly_str;
-        ++it;
-        bool last = it == groups.end();
-        if(!last) code += ",";
-        code += " # " + term_to_string(ctx, indeterminate_term, "**");
-        code += "\n";
-    }
-
-    code += "    ).T\n";
-
-    code += "    coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)\n";
-    code += "    out = (np.dot(A, coeff) + offset).reshape("+ctx.var_names[ctx.axes[0]]+"_data.shape)\n";
-    code += "    return (coeff, out)\n";
     return code;
 }
 
@@ -743,7 +658,6 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
     {
         bool linear_combination = false;
         bool multiline = false;
-        bool numpy = false;
         bool c_code = false;
         for(const parameter& p: parameters)
         {
@@ -751,7 +665,6 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             {
                 if(*val == "lc") linear_combination = true;
                 else if(*val == "multiline") multiline = true;
-                else if(*val == "numpy") numpy = true;
                 else if(*val == "c") c_code = true;
             }
             else
@@ -764,10 +677,6 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         std::string str;
         if(c_code)
             str = rational_to_c(ctx, ctx.r);
-        else if(numpy)
-        {
-            str = rational_to_numpy(ctx, ctx.r);
-        }
         else str = rational_to_string(
             ctx,
             ctx.r,
@@ -1190,7 +1099,7 @@ int main(int argc, char** argv)
 {
     if(argc != 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)
     {
-        fprintf(stderr, "Usage: %s <path-to-command-list>\n%s", argv[0], command_list_format);
+        fprintf(stderr, "Usage: %s <fit-file>\nSee README.md for instructions.", argv[0]);
         return 1;
     }
 
