@@ -19,14 +19,14 @@ While you could probably do all of this with Mathematica, this project costs
 
 ## Features
 
-[x] Easily generate polynomials & rational functions
-[x] Place constraints on values & derivatives
-[x] Output final C code for the fit
-[x] Load datasets from raw binary formats & CSV
-[x] Fit polynomials with linear least-squares
-[x] Fit rationals with non-linear least-squares (Gauss-Newton)
-[x] Automated elimination of low-importance coefficients
-[ ] Tests (WIP)
+* [x] Easily generate polynomials & rational functions
+* [x] Place constraints on values & derivatives
+* [x] Output final C code for the fit
+* [x] Load datasets from raw binary formats & CSV
+* [x] Fit polynomials with linear least-squares
+* [x] Fit rationals with non-linear least-squares (Gauss-Newton)
+* [x] Automated elimination of low-importance coefficients
+* [ ] Tests (WIP)
 
 (Because tests are WIP, please check the output in e.g. Desmos to make sure it
 does what it should, before trusting this program. There's no warranty in any
