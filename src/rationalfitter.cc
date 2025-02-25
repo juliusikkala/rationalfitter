@@ -1,5 +1,6 @@
 #include "polynomial.hh"
 #include "rational.hh"
+#include "optimization.hh"
 #include <cstdio>
 #include <vector>
 #include <cmath>
@@ -712,6 +713,8 @@ bool load_typed_dataset(context& ctx, const std::vector<parameter>& parameters)
     NAMED_PARAM(path, true);
     NAMED_PARAM(offset, false);
     NAMED_PARAM(stride, false);
+    if(check_excess_named_params(named_params))
+        return false;
 
     std::vector<uint8_t> data;
     if(!read_binary_file(path.c_str(), data))
@@ -985,11 +988,13 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         std::string dataset;
         std::string path;
         parameter column;
-        std::string delimiter = ";";
+        std::string delimiter = ",";
         NAMED_PARAM(dataset, true);
         NAMED_PARAM(path, true);
         NAMED_PARAM(column, false);
         NAMED_PARAM(delimiter, false);
+        if(check_excess_named_params(named_params))
+            return false;
 
         if(delimiter.size() != 1)
         {
@@ -1075,7 +1080,75 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             printf("%f\n", value);
         }
         return true;
-    }}
+    }},
+    {"fit", [](context& ctx, const std::vector<parameter>& parameters)->bool
+    {
+        std::map<std::string, parameter> named_params;
+        if(as_named_params(parameters.data(), parameters.size(), named_params))
+            return false;
+
+        size_t data_size = SIZE_MAX;
+        std::map<variable, const double*> variable_data;
+        std::map<variable, double> initial_guesses;
+        for(auto& pair: named_params)
+        {
+            if(pair.first == "max-loss")
+            {
+                // TODO: automated coefficient removal
+            }
+            else
+            {
+                if(ctx.name_vars.count(pair.first) == 0)
+                {
+                    fprintf(stderr, "Unknown variable %s\n", pair.first.c_str());
+                    return false;
+                }
+                variable var = ctx.name_vars.at(pair.first);
+
+                if(const std::string* dataset_name = std::get_if<std::string>(&pair.second))
+                {
+                    if(ctx.datasets.count(*dataset_name) == 0)
+                    {
+                        fprintf(stderr, "No such dataset: %s\n", dataset_name->c_str());
+                        return false;
+                    }
+                    std::vector<double>& dataset = ctx.datasets.at(*dataset_name);
+
+                    variable_data[var] = dataset.data();
+                    data_size = std::min(data_size, dataset.size());
+                }
+                else if(const double* guess = std::get_if<double>(&pair.second))
+                {
+                    initial_guesses[var] = *guess;
+                }
+            }
+        }
+
+        if(variable_data.count(ctx.axes.back()) == 0)
+        {
+            fprintf(
+                stderr,
+                "No data for right-hand-side variable %s, can't fit!\n",
+                ctx.var_names[ctx.axes.back()].c_str()
+            );
+            return false;
+        }
+
+        std::optional<rational> result = fit(
+            ctx.r,
+            ctx.axes.back(),
+            variable_data,
+            data_size,
+            initial_guesses
+        );
+        if(!result.has_value())
+        {
+            fprintf(stderr, "Fit failed; try eliminating roots() expressions first.\n");
+            return false;
+        }
+        ctx.r = *result;
+        return true;
+    }},
 };
 
 int main(int argc, char** argv)

@@ -13,8 +13,16 @@ endif()
 #add_compile_options(-fprofile-arcs -ftest-coverage)
 #add_link_options(-fprofile-arcs -ftest-coverage)
 
+
+find_package(OpenMP)
+
 # Core is built as a "library" so that it's easier to link to test programs.
 add_library(fit-core OBJECT src/polynomial.cc src/rational.cc src/matrix.cc src/optimization.cc)
+
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(fit-core PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
 add_executable(rationalfitter src/rationalfitter.cc)
 target_link_libraries(rationalfitter PUBLIC fit-core)
 set_property(TARGET rationalfitter PROPERTY CXX_STANDARD 17)

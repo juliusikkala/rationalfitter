@@ -35,6 +35,7 @@ std::optional<matrix> add(const matrix& a, const matrix& b);
 std::optional<matrix> sub(const matrix& a, const matrix& b);
 matrix transpose(const matrix& m);
 std::tuple<matrix, matrix> qr_decompose(const matrix& m);
+std::tuple<matrix /*R*/, matrix /*v*/> lstsq_r_decompose(const matrix& A, const matrix& b);
 
 std::string to_string(const matrix& m, const char* line_prefix = "");
 

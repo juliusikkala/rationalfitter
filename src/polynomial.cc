@@ -547,7 +547,7 @@ std::optional<polynomial> try_factor(const polynomial& p, variable id, const pol
     }
 
     // Factor as (x-r)*(factored)
-    // 'Coefficients' contains negated coefficients by degree of the original
+    // 'Coefficients' contains coefficients by degree of the original
     // polynomial.
     std::vector<polynomial> coefficients;
     for(const term& t: p.terms)
@@ -567,13 +567,18 @@ std::optional<polynomial> try_factor(const polynomial& p, variable id, const pol
         coefficients[degree].terms.push_back(without_t);
     }
 
+    if(coefficients.size() <= 1)
+    { // Doesn't even depend on 'id', so can't factor it out.
+        return {};
+    }
+
     // Simplify the coefficients for good measure
     for(polynomial& c: coefficients)
         c = simplify(c);
 
     polynomial prev;
 
-    for(unsigned i = 0; i < coefficients.size()-1; ++i)
+    for(unsigned i = 0; i+1 < coefficients.size(); ++i)
     {
         rational rat;
         rat.numerator = sum(prev, multiply(coefficients[i], -1.0));

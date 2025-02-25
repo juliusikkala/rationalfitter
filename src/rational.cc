@@ -1,5 +1,6 @@
 #include "rational.hh"
 #include <cmath>
+#include <algorithm>
 
 std::optional<rational> differentiate(const rational& r, variable id)
 {
@@ -59,8 +60,14 @@ rational simplify(const rational& r)
     }
 
     // Find common factors to remove
-    std::set<variable> live = live_variables(res.numerator);
-    live.merge(live_variables(res.denominator));
+    std::set<variable> num_live = live_variables(res.numerator);
+    std::set<variable> denom_live = live_variables(res.denominator);
+    std::vector<variable> live;
+    std::set_intersection(
+        denom_live.begin(), denom_live.end(), num_live.begin(), num_live.end(),
+        std::inserter(live, live.begin())
+    );
+
     bool factored = false;
     for(variable id: live)
     {

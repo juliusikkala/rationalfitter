@@ -70,8 +70,8 @@ matrix matrix::clip(unsigned x, unsigned y, unsigned w, unsigned h) const
     c.h = h;
     c.values.resize(w * h);
 
-    for(unsigned i = 0; i < w; ++i)
     for(unsigned j = 0; j < h; ++j)
+    for(unsigned i = 0; i < w; ++i)
         c.values[i+j*w] = values[x+i+(y+j)*this->w];
 
     return c;
@@ -79,8 +79,8 @@ matrix matrix::clip(unsigned x, unsigned y, unsigned w, unsigned h) const
 
 void matrix::insert(unsigned x, unsigned y, const matrix& other)
 {
-    for(unsigned i = 0; i < other.w; ++i)
     for(unsigned j = 0; j < other.h; ++j)
+    for(unsigned i = 0; i < other.w; ++i)
         values[x+i+(y+j)*this->w] = other(i, j);
 }
 
@@ -97,13 +97,26 @@ double length(const matrix& m)
     return sqrt(sum);
 }
 
+matrix vector_square(const matrix& vec)
+{
+    matrix res = matrix::zeroes(vec.h, vec.h);
+    for(unsigned y = 0; y < vec.h; ++y)
+    for(unsigned x = y; x < vec.h; ++x)
+    {
+        double val = vec(0,x) * vec(0,y);
+        res(x, y) = val;
+        res(y, x) = val;
+    }
+    return res;
+}
+
 std::optional<matrix> mul(const matrix& a, const matrix& b)
 {
     if(a.w != b.h)
         return {};
     matrix result = matrix::zeroes(b.w, a.h);
-    for(unsigned x = 0; x < result.w; ++x)
     for(unsigned y = 0; y < result.h; ++y)
+    for(unsigned x = 0; x < result.w; ++x)
     for(unsigned t = 0; t < a.w; ++t)
         result(x, y) += a(t, y) * b(x, t);
     return result;
@@ -112,8 +125,8 @@ std::optional<matrix> mul(const matrix& a, const matrix& b)
 matrix mul(const matrix& a, double b)
 {
     matrix result = matrix::zeroes(a.w, a.h);
-    for(unsigned x = 0; x < result.w; ++x)
     for(unsigned y = 0; y < result.h; ++y)
+    for(unsigned x = 0; x < result.w; ++x)
         result(x, y) = a(x, y) * b;
     return result;
 }
@@ -123,8 +136,8 @@ std::optional<matrix> add(const matrix& a, const matrix& b)
     if(a.w != b.w || a.h != b.h)
         return {};
     matrix result = matrix::zeroes(a.w, a.h);
-    for(unsigned x = 0; x < result.w; ++x)
     for(unsigned y = 0; y < result.h; ++y)
+    for(unsigned x = 0; x < result.w; ++x)
         result(x, y) = a(x, y) + b(x, y);
     return result;
 }
@@ -134,8 +147,8 @@ std::optional<matrix> sub(const matrix& a, const matrix& b)
     if(a.w != b.w || a.h != b.h)
         return {};
     matrix result = matrix::zeroes(a.w, a.h);
-    for(unsigned x = 0; x < result.w; ++x)
     for(unsigned y = 0; y < result.h; ++y)
+    for(unsigned x = 0; x < result.w; ++x)
         result(x, y) = a(x, y) - b(x, y);
     return result;
 }
@@ -146,11 +159,9 @@ matrix transpose(const matrix& m)
     t.w = m.h;
     t.h = m.w;
     t.values.resize(m.values.size());
-    for(unsigned x = 0; x < t.w; ++x)
     for(unsigned y = 0; y < t.h; ++y)
-    {
+    for(unsigned x = 0; x < t.w; ++x)
         t(x, y) = m(y, x);
-    }
     return t;
 }
 
@@ -179,6 +190,34 @@ std::tuple<matrix, matrix> qr_decompose(const matrix& A)
         R = mul(Qi_expand, R).value();
     }
     return {transpose(Qt), mul(Qt, A).value()};
+}
+
+std::tuple<matrix /*R*/, matrix /*v*/> lstsq_r_decompose(const matrix& A, const matrix& b)
+{
+    if(A.w >= A.h || b.h != A.h)
+        return {{}, {}};
+
+    matrix R = A;
+    matrix v = b;
+    for(int i = 0; i < std::min(A.w, A.h-1); ++i)
+    {
+        matrix x = R.column(i).clip(0, i, 1, R.h-i);
+        double alpha = -sign(x(0, 0)) * length(x);
+        x(0, 0) -= alpha;
+
+        double u_length = length(x);
+        x = mul(x, 1.0 / u_length);
+
+        matrix xx = vector_square(x);
+
+        matrix Qi_small = sub(matrix::eyes(R.h-i, R.h-i), mul(xx, 2.0)).value();
+        matrix Qi_expand = matrix::eyes(R.h, R.h, 1.0);
+        Qi_expand.insert(i, i, Qi_small);
+
+        R = mul(Qi_expand, R).value();
+        v = mul(Qi_expand, v).value();
+    }
+    return {R, v};
 }
 
 std::string to_string(const matrix& m, const char* line_prefix)
