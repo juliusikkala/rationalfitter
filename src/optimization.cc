@@ -22,15 +22,15 @@ matrix least_squares(const matrix& A, const matrix& b)
     return x;
 }
 
-std::optional<double> l2_loss(
+std::optional<number> l2_loss(
     const rational& r,
     const fit_params& params,
-    const std::vector<double>& coefficients
+    const std::vector<number>& coefficients
 ){
-    double sum_loss = 0;
+    number sum_loss = 0;
     size_t evaluated_points = 0;
 
-    std::vector<double> variable_values;
+    std::vector<number> variable_values;
     for(size_t j = 0; j < params.data_size; ++j)
     {
         variable_values = coefficients;
@@ -43,14 +43,14 @@ std::optional<double> l2_loss(
         }
 
         // Then, evaluate groups.
-        std::optional<double> value = evaluate(r, variable_values);
+        std::optional<number> value = evaluate(r, variable_values);
         if(!value.has_value())
             continue;
 
         evaluated_points++;
 
-        double right_side = params.data.at(params.right_side_variable)[j];
-        double delta = *value - right_side;
+        number right_side = params.data.at(params.right_side_variable)[j];
+        number delta = *value - right_side;
         sum_loss += delta * delta;
     }
 
@@ -74,7 +74,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
     {
         variable var = fit_parameters[i];
         if(params.initial_guesses.count(var) != 0)
-            coefficients(0, i) = params.initial_guesses.at(var);
+            coefficients(0, i) = (double)params.initial_guesses.at(var);
         else coefficients(0, i) = 1;
     }
 
@@ -87,7 +87,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
 
     auto get_loss = [&](const rational& r, const matrix& coefficients)
     {
-        std::vector<double> variable_values;
+        std::vector<number> variable_values;
         for(size_t i = 0; i < fit_parameters.size(); ++i)
         {
             variable var = fit_parameters[i];
@@ -95,7 +95,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
                 variable_values.resize(var+1);
             variable_values[var] = coefficients(0,i);
         }
-        std::optional<double> loss = l2_loss(r, params, variable_values);
+        std::optional<number> loss = l2_loss(r, params, variable_values);
         return loss.has_value() ? *loss : -1.0f;
     };
 
@@ -136,8 +136,8 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         matrix A;
         matrix b;
 
-        std::vector<double> variable_values;
-        std::vector<double> group_values;
+        std::vector<number> variable_values;
+        std::vector<number> group_values;
         for(size_t j = 0; j < params.data_size; ++j)
         {
             // Fetch values for defined variables
@@ -153,7 +153,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
             group_values.clear();
             for(const auto& pair: groups)
             {
-                std::optional<double> value = evaluate(pair.second, variable_values);
+                std::optional<number> value = evaluate(pair.second, variable_values);
                 if(!value.has_value())
                 {
                     cant_eval = true;
@@ -164,8 +164,9 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
             // Skip this datapoint if we can't eval something, it may just be
             // an extremity.
             if(cant_eval) continue;
-            b.values.push_back(-group_values[0]);
-            A.values.insert(A.values.end(), group_values.begin()+1, group_values.end());
+            b.values.push_back((double)-group_values[0]);
+            for(size_t i = 1; i < group_values.size(); ++i)
+                A.values.push_back((double)group_values[i]);
         }
 
         A.w = groups.size()-1;
@@ -204,7 +205,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         derivatives[i] = *deriv;
     }
 
-    double best_loss = get_loss(func, coefficients);
+    number best_loss = get_loss(func, coefficients);
     matrix best_coefficients = coefficients;
     bool converged = false;
     for(unsigned iter = 0; iter < params.nlls_max_iterations && !converged; ++iter)
@@ -212,8 +213,8 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         matrix J;
         matrix r;
 
-        std::vector<double> variable_values;
-        std::vector<double> derivative_values(fit_parameters.size());
+        std::vector<number> variable_values;
+        std::vector<number> derivative_values(fit_parameters.size());
         for(size_t i = 0; i < fit_parameters.size(); ++i)
         {
             variable var = fit_parameters[i];
@@ -231,14 +232,14 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
                 variable_values[pair.first] = pair.second[j];
             }
 
-            std::optional<double> func_value = evaluate(func, variable_values);
+            std::optional<number> func_value = evaluate(func, variable_values);
             if(!func_value.has_value())
                 continue;
 
             bool cant_eval = false;
             for(size_t i = 0; i < fit_parameters.size(); ++i)
             {
-                std::optional<double> deriv_value = evaluate(derivatives[i], variable_values);
+                std::optional<number> deriv_value = evaluate(derivatives[i], variable_values);
                 if(!deriv_value.has_value())
                 {
                     cant_eval = true;
@@ -250,8 +251,9 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
             // an extremity.
             if(cant_eval) continue;
 
-            J.values.insert(J.values.end(), derivative_values.begin(), derivative_values.end());
-            r.values.push_back(params.data.at(params.right_side_variable)[j] - *func_value);
+            for(size_t i = 1; i < derivative_values.size(); ++i)
+                J.values.push_back((double)derivative_values[i]);
+            r.values.push_back((double)(params.data.at(params.right_side_variable)[j] - *func_value));
         }
 
         J.w = fit_parameters.size();
@@ -264,7 +266,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         coefficients = add(coefficients, mul(delta_coefficients, params.nlls_step_size)).value();
 
         // Just to print the loss
-        double loss = get_loss(func, coefficients);
+        number loss = get_loss(func, coefficients);
         //printf("Iteration %u loss: %f\n", iter, loss);
         if(loss < best_loss)
         {
@@ -291,7 +293,7 @@ std::optional<rational> fit_eliminate_variable(const rational& func, const fit_p
         return fit_src;
 
     variable best_loss_var = 0;
-    double best_loss = -1.0;
+    number best_loss = -1.0;
     std::optional<rational> best_result;
     for(variable var: live_vars)
     {
@@ -300,7 +302,7 @@ std::optional<rational> fit_eliminate_variable(const rational& func, const fit_p
         if(!result.has_value())
             return {};
 
-        std::optional<double> loss = l2_loss(*result, params);
+        std::optional<number> loss = l2_loss(*result, params);
         if(!loss.has_value())
             return {};
 

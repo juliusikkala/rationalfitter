@@ -11,10 +11,10 @@ struct rational
 std::optional<rational> differentiate(const rational& r, variable id);
 rational simplify(const rational& r);
 
-rational assign(const rational& r, variable id, double value);
+rational assign(const rational& r, variable id, number value);
 std::set<variable> live_variables(const rational& r);
 
-polynomial get_zero_polynomial(const rational& r, double right_side);
-std::optional<double> evaluate(const rational& r, const std::vector<double>& variable_values);
+polynomial get_zero_polynomial(const rational& r, number right_side);
+std::optional<number> evaluate(const rational& r, const std::vector<number>& variable_values);
 
 #endif

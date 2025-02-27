@@ -5,7 +5,7 @@
 std::optional<rational> differentiate(const rational& r, variable id)
 {
     std::optional<polynomial> dnum = differentiate(r.numerator, id);
-    std::optional<double> denom_value = try_get_constant_value(r.denominator);
+    std::optional<number> denom_value = try_get_constant_value(r.denominator);
     if(denom_value.has_value() && *denom_value == 1)
     { // Fast track for pure polynomials.
         if(dnum.has_value())
@@ -38,28 +38,45 @@ rational simplify(const rational& r)
     res.numerator = simplify(r.numerator);
     res.denominator = simplify(r.denominator);
 
-    // Identical numerator and denominator, trivial to simplify.
-    if(res.numerator == res.denominator)
-        return rational{polynomial::create(1.0), polynomial::create(1.0)};
-
-    // Normalize denominator if possible.
-    double factor = 0;
+    number denom_constant = 0;
+    number denom_scale = 0;
+    number num_scale = 0;
     for(term& t: res.denominator.terms)
     {
         if(t.mul.size() == 0)
-            factor += t.coefficient;
+            denom_constant += t.coefficient;
+        denom_scale = fabs(t.coefficient) > fabs(denom_scale) ?
+            t.coefficient : denom_scale;
+    }
+    for(term& t: res.numerator.terms)
+    {
+        num_scale = fabs(t.coefficient) > fabs(num_scale) ?
+            t.coefficient : num_scale;
     }
 
-    bool has_constant_factor = fabs(factor) > 1e-10;
-    if(has_constant_factor)
+    if(denom_scale != 0)
+    {
+        for(term& t: res.denominator.terms)
+            t.coefficient /= denom_scale;
+    }
+    if(num_scale != 0)
     {
         for(term& t: res.numerator.terms)
-            t.coefficient /= factor;
-        for(term& t: res.denominator.terms)
-            t.coefficient /= factor;
+            t.coefficient /= num_scale;
     }
 
-    // Find common factors to remove
+    // Identical numerator and denominator, trivial to simplify.
+    if(res.numerator == res.denominator)
+        return rational{polynomial::create(num_scale/denom_scale), polynomial::create(1.0)};
+
+    // Normalize by denominator constant.
+    if(denom_constant == 0) denom_constant == 1;
+    for(term& t: res.numerator.terms)
+        t.coefficient *= num_scale / denom_constant;
+    for(term& t: res.denominator.terms)
+        t.coefficient *= denom_scale / denom_constant;
+
+    // Otherwise, try to factorize and simplify that way.
     std::set<variable> num_live = live_variables(res.numerator);
     std::set<variable> denom_live = live_variables(res.denominator);
     std::vector<variable> live;
@@ -99,7 +116,7 @@ rational simplify(const rational& r)
     return res;
 }
 
-rational assign(const rational& r, variable id, double value)
+rational assign(const rational& r, variable id, number value)
 {
     rational res;
     res.numerator = assign(r.numerator, id, value);
@@ -114,7 +131,7 @@ std::set<variable> live_variables(const rational& r)
     return live;
 }
 
-polynomial get_zero_polynomial(const rational& r, double right_side)
+polynomial get_zero_polynomial(const rational& r, number right_side)
 {
     polynomial res = r.numerator;
 
@@ -128,10 +145,10 @@ polynomial get_zero_polynomial(const rational& r, double right_side)
     return simplify(res);
 }
 
-std::optional<double> evaluate(const rational& r, const std::vector<double>& variable_values)
+std::optional<number> evaluate(const rational& r, const std::vector<number>& variable_values)
 {
-    std::optional<double> num_value = evaluate(r.numerator, variable_values);
-    std::optional<double> denom_value = evaluate(r.denominator, variable_values);
+    std::optional<number> num_value = evaluate(r.numerator, variable_values);
+    std::optional<number> denom_value = evaluate(r.denominator, variable_values);
     if(!num_value.has_value() || !denom_value.has_value())
         return {};
     if(*denom_value == 0)

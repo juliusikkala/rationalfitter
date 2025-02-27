@@ -1,6 +1,7 @@
 #include "polynomial.hh"
 #include "rational.hh"
 #include "optimization.hh"
+#include "number.hh"
 #include <cstdio>
 #include <vector>
 #include <cmath>
@@ -18,7 +19,7 @@ struct context
     std::map<std::string, variable> name_vars;
     std::vector<variable> axes;
     std::vector<variable> coefficients;
-    std::map<std::string, std::vector<double>> datasets;
+    std::map<std::string, std::vector<number>> datasets;
     rational r;
 };
 
@@ -74,15 +75,13 @@ std::string term_to_string(
     if(t.coefficient == 0)
         return "0";
 
-    float coefficient = fabs(t.coefficient);
+    number coefficient = fabs(t.coefficient);
 
     std::string ret = t.coefficient < 0 ? "- " : "";
     bool show_coefficient = false;
     if(coefficient != 1 || t.mul.size() == 0)
     {
-        ret += is_integer(coefficient) ?
-            std::to_string(int64_t(coefficient)) :
-            std::to_string(coefficient);
+        ret += to_string(coefficient);
         show_coefficient = true;
     }
 
@@ -640,12 +639,12 @@ bool load_typed_dataset(context& ctx, const std::vector<parameter>& parameters)
 
     if(stride == 0) stride = sizeof(T);
 
-    std::vector<double> values;
+    std::vector<number> values;
     for(; offset+sizeof(T) <= data.size(); offset += stride)
     {
         T f;
         memcpy(&f, data.data()+offset, sizeof(T));
-        values.push_back((double)f);
+        values.push_back(number(f));
     }
 
     ctx.datasets[dataset] = values;
@@ -949,7 +948,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         }
 
         // If column is empty, assume this is a line-separated list of floats.
-        std::vector<double> data;
+        std::vector<number> data;
         bool failed = false;
         read_csv(csv_str, delimiter_char,
             [&](unsigned column, unsigned, const char* cur_entry){
@@ -983,10 +982,10 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             fprintf(stderr, "No such dataset: %s\n", name.c_str());
             return false;
         }
-        const std::vector<double>& data = ctx.datasets.at(name);
-        for(double value: data)
+        const std::vector<number>& data = ctx.datasets.at(name);
+        for(number value: data)
         {
-            printf("%f\n", value);
+            printf("%f\n", (double)value);
         }
         return true;
     }},
@@ -1029,7 +1028,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                     fprintf(stderr, "No such dataset: %s\n", dataset_name->c_str());
                     return false;
                 }
-                std::vector<double>& dataset = ctx.datasets.at(*dataset_name);
+                std::vector<number>& dataset = ctx.datasets.at(*dataset_name);
 
                 params.data[var] = dataset.data();
                 params.data_size = std::min(params.data_size, dataset.size());
@@ -1051,7 +1050,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         }
 
         std::optional<rational> result = fit(ctx.r, params);
-        double baseline_loss = l2_loss(*result, params).value_or(-1.0);
+        double baseline_loss = (double)l2_loss(*result, params).value_or(-1.0);
         if(eliminate != 0 || maxloss != 0)
             printf("Baseline loss: %f\n", baseline_loss);
 
@@ -1061,7 +1060,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             std::optional<rational> candidate = fit_eliminate_variable(ctx.r, params, eliminated_variables);
             if(eliminated_variables.size() > 0 && candidate.has_value())
             {
-                double loss = l2_loss(*candidate, params).value_or(-1.0);
+                double loss = (double)l2_loss(*candidate, params).value_or(-1.0);
                 variable eliminated = eliminated_variables.back();
                 const char* eliminated_name = ctx.var_names[eliminated].c_str();
                 if(maxloss != 0 && loss > maxloss)
@@ -1087,9 +1086,9 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             return false;
         }
 
-        std::optional<double> loss = l2_loss(*result, params);
+        std::optional<number> loss = l2_loss(*result, params);
         if(loss.has_value())
-            printf("Final L2 loss: %f\n", *loss);
+            printf("Final L2 loss: %f\n", (double)*loss);
         ctx.r = *result;
         return true;
     }},

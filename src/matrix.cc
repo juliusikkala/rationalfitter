@@ -1,5 +1,4 @@
 #include "matrix.hh"
-#include "math.hh"
 #include <algorithm>
 #include <cmath>
 
@@ -174,7 +173,7 @@ std::tuple<matrix, matrix> qr_decompose(const matrix& A)
     for(int i = 0; i < std::min(A.w, A.h-1); ++i)
     {
         matrix x = R.column(i).clip(0, i, 1, R.h-i);
-        double alpha = -sign(x(0, 0)) * length(x);
+        double alpha = -copysign(length(x), x(0, 0));
         x(0, 0) -= alpha;
 
         double u_length = length(x);
@@ -202,7 +201,7 @@ std::tuple<matrix /*R*/, matrix /*v*/> lstsq_r_decompose(const matrix& A, const 
     for(int i = 0; i < std::min(A.w, A.h-1); ++i)
     {
         matrix x = R.column(i).clip(0, i, 1, R.h-i);
-        double alpha = -sign(x(0, 0)) * length(x);
+        double alpha = -copysign(length(x), x(0, 0));
         x(0, 0) -= alpha;
 
         double u_length = length(x);

@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include "number.hh"
 
 struct polynomial;
 
@@ -17,7 +18,7 @@ struct polynomial
     std::vector<term> terms;
 
     static polynomial zero();
-    static polynomial create(double value);
+    static polynomial create(number value);
     static polynomial create(term single_term);
     static polynomial roots(variable var, polynomial expr);
     static polynomial create(
@@ -34,7 +35,7 @@ bool operator==(const polynomial& a, const polynomial& b);
 struct var_power;
 struct term
 {
-    double coefficient = 0;
+    number coefficient = 0;
     std::vector<var_power> mul;
 };
 bool operator<(const term& a, const term& b);
@@ -71,26 +72,26 @@ polynomial multiply(const term& a, const term& b);
 
 // Merges multiplicands with common variables and resolves roots if possible.
 polynomial simplify(const term& t);
-polynomial assign(const term& t, variable id, double value);
+polynomial assign(const term& t, variable id, number value);
 std::optional<term> try_sum(const term& a, const term& b); // Succeeds only if multipliers are common.
 polynomial assign(const term& t, variable id, const polynomial& equivalent);
 bool compatible(const var_power& a, const var_power& b);
 
 std::optional<polynomial> differentiate(const polynomial& p, variable id);
 polynomial multiply(const polynomial& a, const polynomial& b);
-polynomial multiply(const polynomial& a, double v);
+polynomial multiply(const polynomial& a, number v);
 polynomial sum(const polynomial& a, const polynomial& b);
 polynomial sort(const polynomial& p); // Sorts terms by variable indices and powers.
-polynomial simplify(const polynomial& p, double zero_epsilon = 1e-10); // Merges terms with same variables and removes zero terms
+polynomial simplify(const polynomial& p); // Merges terms with same variables and removes zero terms
 polynomial assign(const polynomial& p, variable id, const polynomial& equivalent);
-polynomial assign(const polynomial& p, variable id, double value);
+polynomial assign(const polynomial& p, variable id, number value);
 
 
 // There's two ways this can fail: either 't' contains 'roots' expressions that
 // cannot be solved or has multiple solutions, or 'variable_values' doesn't
 // actually contain a value for each live variable.
-std::optional<double> evaluate(const term& t, const std::vector<double>& variable_values);
-std::optional<double> evaluate(const polynomial& p, const std::vector<double>& variable_values);
+std::optional<number> evaluate(const term& t, const std::vector<number>& variable_values);
+std::optional<number> evaluate(const polynomial& p, const std::vector<number>& variable_values);
 
 // Try to factor a polynomial to the form
 // (var-root) * (result_polynomial)
@@ -98,7 +99,7 @@ std::optional<double> evaluate(const polynomial& p, const std::vector<double>& v
 // on them.
 std::optional<polynomial> try_factor(const polynomial& p, variable id, const polynomial& root);
 
-std::optional<double> try_get_constant_value(const polynomial& p);
+std::optional<number> try_get_constant_value(const polynomial& p);
 bool depends_on_var(const polynomial& p, variable id);
 std::set<variable> live_variables(const polynomial& p);
 // Tries to solve the roots raised to 'exponent', and returns a value if it
@@ -140,7 +141,7 @@ std::map<indeterminate_group, polynomial> group_by_indeterminates(
     size_t indeterminate_count
 );
 
-polynomial get_zero_polynomial(const polynomial& a, double right_side);
+polynomial get_zero_polynomial(const polynomial& a, number right_side);
 
 // Reduces the number of variables with the knowledge that 'zero' must always be
 // zero regardless of the values of 'indeterminates'. The resulting equivalences

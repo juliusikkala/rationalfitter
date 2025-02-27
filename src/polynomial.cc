@@ -1,5 +1,4 @@
 #include "polynomial.hh"
-#include "math.hh"
 #include "rational.hh"
 #include <algorithm>
 #include <cmath>
@@ -102,7 +101,7 @@ polynomial polynomial::zero()
     return polynomial{};
 }
 
-polynomial polynomial::create(double value)
+polynomial polynomial::create(number value)
 {
     polynomial p;
     p.terms.push_back(term{value, {}});
@@ -286,7 +285,7 @@ polynomial simplify(const term& t)
     return polynomial::create(res);
 }
 
-polynomial assign(const term& t, variable id, double value)
+polynomial assign(const term& t, variable id, number value)
 {
     term res = t;
     for(auto it = res.mul.begin(); it != res.mul.end();)
@@ -301,7 +300,7 @@ polynomial assign(const term& t, variable id, double value)
         }
         else if(it->id == id)
         {
-            res.coefficient *= ipow(value, it->degree);
+            res.coefficient *= pow(value, number(it->degree));
             it = res.mul.erase(it);
             continue;
         }
@@ -376,7 +375,7 @@ polynomial multiply(const polynomial& a, const polynomial& b)
     return simplify(res);
 }
 
-polynomial multiply(const polynomial& a, double v)
+polynomial multiply(const polynomial& a, number v)
 {
     polynomial res = a;
     for(term& t: res.terms)
@@ -403,7 +402,7 @@ polynomial sort(const polynomial& p)
     return res;
 }
 
-polynomial simplify(const polynomial& p, double zero_epsilon)
+polynomial simplify(const polynomial& p)
 {
     polynomial res;
 
@@ -420,7 +419,7 @@ polynomial simplify(const polynomial& p, double zero_epsilon)
     for(unsigned i = 0; i < res.terms.size();)
     {
         term& cur = res.terms[i];
-        if(fabs(cur.coefficient) <= zero_epsilon)
+        if(cur.coefficient == 0.0)
         {
             res.terms.erase(res.terms.begin()+i);
             continue;
@@ -453,7 +452,7 @@ polynomial assign(const polynomial& p, variable id, const polynomial& equivalent
     return simplify(res);
 }
 
-polynomial assign(const polynomial& p, variable id, double value)
+polynomial assign(const polynomial& p, variable id, number value)
 {
     polynomial res;
     for(const term& t: p.terms)
@@ -464,12 +463,12 @@ polynomial assign(const polynomial& p, variable id, double value)
     return simplify(res);
 }
 
-std::optional<double> evaluate(const term& t, const std::vector<double>& variable_values)
+std::optional<number> evaluate(const term& t, const std::vector<number>& variable_values)
 {
-    double product = t.coefficient;
+    number product = t.coefficient;
     for(const var_power& vp: t.mul)
     {
-        double value = 0.0;
+        number value = 0.0;
         if(vp.roots.has_value())
         {
             // Uh oh, a roots expression... This needs symbolic evaluation and
@@ -487,7 +486,7 @@ std::optional<double> evaluate(const term& t, const std::vector<double>& variabl
             std::variant<polynomial, solve_failure_reason> result = try_solve_single_root(assigned, vp.roots->var, vp.degree);
             if(polynomial* p = std::get_if<polynomial>(&result))
             {
-                std::optional<double> opt_value = try_get_constant_value(*p);
+                std::optional<number> opt_value = try_get_constant_value(*p);
                 if(!opt_value.has_value())
                     return {};
                 value = *opt_value;
@@ -496,7 +495,7 @@ std::optional<double> evaluate(const term& t, const std::vector<double>& variabl
         }
         else if(vp.id < variable_values.size())
         {
-            value = ipow(variable_values[vp.id], vp.degree);
+            value = pow(variable_values[vp.id], vp.degree);
         }
         else return {};
 
@@ -505,12 +504,12 @@ std::optional<double> evaluate(const term& t, const std::vector<double>& variabl
     return product;
 }
 
-std::optional<double> evaluate(const polynomial& p, const std::vector<double>& variable_values)
+std::optional<number> evaluate(const polynomial& p, const std::vector<number>& variable_values)
 {
-    double sum = 0.0;
+    number sum = 0.0;
     for(const term& t: p.terms)
     {
-        std::optional<double> value = evaluate(t, variable_values);
+        std::optional<number> value = evaluate(t, variable_values);
         if(!value.has_value())
             return {};
         sum += *value;
@@ -600,7 +599,7 @@ std::optional<polynomial> try_factor(const polynomial& p, variable id, const pol
     else return {}; // Not a root for this polynomial.
 }
 
-std::optional<double> try_get_constant_value(const polynomial& p)
+std::optional<number> try_get_constant_value(const polynomial& p)
 {
     if(p.terms.size() == 0)
         return 0;
@@ -724,7 +723,7 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
         rat.denominator = coefficients.back();
         rat = simplify(rat);
 
-        std::optional<double> a = try_get_constant_value(rat.denominator);
+        std::optional<number> a = try_get_constant_value(rat.denominator);
         if(!a.has_value())
         {
             // TODO: Return rational functions instead of polynomials. This
@@ -754,7 +753,7 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
         rat.denominator = multiply(coefficients[2], 2.0);
         rat = simplify(rat);
 
-        std::optional<double> a = try_get_constant_value(rat.denominator);
+        std::optional<number> a = try_get_constant_value(rat.denominator);
         if(!a.has_value())
         {
             // TODO: Return rational functions instead of polynomials. This
@@ -772,23 +771,23 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
         if(!deriv.has_value())
             return {};
         roots_result deriv_roots = try_find_all_roots(*deriv, id);
-        std::vector<double> extrema;
+        std::vector<number> extrema;
         for(const polynomial& p: deriv_roots.roots)
         {
-            std::optional<double> val = try_get_constant_value(p);
+            std::optional<number> val = try_get_constant_value(p);
             if(val.has_value())
                 extrema.push_back(*val);
         }
 
-        auto eval = [&](const polynomial& p, double value)
+        auto eval = [&](const polynomial& p, number value)
         {
             return try_get_constant_value(assign(p, id, value));
         };
 
-        auto binary_search = [&](double start, double end) -> std::optional<double>
+        auto binary_search = [&](number start, number end) -> std::optional<number>
         {
-            std::optional<double> start_y = eval(p, start);
-            std::optional<double> end_y = eval(p, end);
+            std::optional<number> start_y = eval(p, start);
+            std::optional<number> end_y = eval(p, end);
             if(!start_y.has_value() || !end_y.has_value())
                 return {};
 
@@ -804,11 +803,11 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
                 return {};
 
             // Great, there should be a root here.
-            double mid = 0;
-            std::optional<double> mid_y;
+            number mid = 0;
+            std::optional<number> mid_y;
             for(int iter = 0; iter < 64; ++iter)
             {
-                double mid = (start + end) * 0.5;
+                number mid = (start + end) * 0.5;
                 mid_y = eval(p, start);
                 if(!mid_y.has_value())
                     break;
@@ -824,35 +823,35 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
         // Search between extrema first
         for(unsigned i = 1; i < extrema.size(); ++i)
         {
-            double start = extrema[i-1];
-            double end = extrema[i];
-            std::optional<double> root = binary_search(start, end);
+            number start = extrema[i-1];
+            number end = extrema[i];
+            std::optional<number> root = binary_search(start, end);
             if(root.has_value())
                 return polynomial::create(*root);
         }
 
         // Search outside of extrema next
-        auto exterior_search = [&](double start_from) -> std::optional<double>
+        auto exterior_search = [&](number start_from) -> std::optional<number>
         {
-            std::optional<double> start_y = eval(p, start_from);
-            std::optional<double> slope = eval(*deriv, start_from);
+            std::optional<number> start_y = eval(p, start_from);
+            std::optional<number> slope = eval(*deriv, start_from);
             if(!slope.has_value() || !start_y.has_value())
                 return {};
 
             if(*start_y == 0)
                 return start_from;
 
-            double search_direction = sign(*slope);
+            number search_direction = sign(*slope);
             if(*start_y > 0) search_direction = -search_direction;
 
             // Find search interval
-            double step_size = search_direction * 1.0;
-            double start_x = *start_y;
-            double end_x = *start_y;
+            number step_size = search_direction * 1.0;
+            number start_x = *start_y;
+            number end_x = *start_y;
             for(int iter = 0; iter < 64; ++iter, step_size *= 4)
             {
-                double x = start_x + step_size;
-                std::optional<double> y = eval(p, x);
+                number x = start_x + step_size;
+                std::optional<number> y = eval(p, x);
                 if(!y.has_value())
                     break;
                 if(sign(*y) != sign(*start_y))
@@ -870,7 +869,7 @@ std::optional<polynomial> try_find_any_root(const polynomial& p, variable id)
             return binary_search(start_x, end_x);
         };
 
-        std::optional<double> pos = exterior_search(extrema.size() == 0 ? 0 : extrema[0]-1.0);
+        std::optional<number> pos = exterior_search(extrema.size() == 0 ? 0 : extrema[0]-1.0);
         if(pos.has_value()) return polynomial::create(*pos);
 
         pos = exterior_search(extrema.size() == 0 ? 0 : extrema.back()+1.0);
@@ -884,7 +883,7 @@ std::optional<polynomial> try_get_nth_root(const polynomial& constant, unsigned 
     if(N == 1) return constant;
 
     bool even_degree = (N&1) == 0;
-    std::optional<double> b = try_get_constant_value(constant);
+    std::optional<number> b = try_get_constant_value(constant);
     if(b == 0) return polynomial::zero();
     else if(b.has_value())
     { // Constant value.
@@ -1059,7 +1058,7 @@ std::map<indeterminate_group, polynomial> group_by_indeterminates(
     return groups;
 }
 
-polynomial get_zero_polynomial(const polynomial& a, double right_side)
+polynomial get_zero_polynomial(const polynomial& a, number right_side)
 {
     polynomial res = a;
     res.terms.push_back(term{-right_side, {}});
@@ -1080,7 +1079,7 @@ bool pin(
     for(auto it = zero_groups.begin(); it != zero_groups.end();)
     {
         polynomial& zero_polynomial = it->second;
-        std::optional<double> value = try_get_constant_value(zero_polynomial);
+        std::optional<number> value = try_get_constant_value(zero_polynomial);
         if(value.has_value())
         {
             // If it's already zero, there's nothing to be done here.
