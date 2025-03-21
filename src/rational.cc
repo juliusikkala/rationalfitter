@@ -70,13 +70,14 @@ rational simplify(const rational& r)
         return rational{polynomial::create(num_scale/denom_scale), polynomial::create(1.0)};
 
     // Normalize by denominator constant.
-    if(denom_constant == 0) denom_constant == 1;
+    if(denom_constant == 0) denom_constant = 1;
     for(term& t: res.numerator.terms)
         t.coefficient *= num_scale / denom_constant;
     for(term& t: res.denominator.terms)
         t.coefficient *= denom_scale / denom_constant;
 
     // Otherwise, try to factorize and simplify that way.
+    /*
     std::set<variable> num_live = live_variables(res.numerator);
     std::set<variable> denom_live = live_variables(res.denominator);
     std::vector<variable> live;
@@ -113,6 +114,7 @@ rational simplify(const rational& r)
     }
 
     if(factored) return simplify(res);
+    */
     return res;
 }
 

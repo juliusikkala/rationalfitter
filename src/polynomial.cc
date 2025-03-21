@@ -895,6 +895,9 @@ std::optional<polynomial> try_get_nth_root(const polynomial& constant, unsigned 
     // Time to get desperate. If we can factor 'b' by any of its variables
     // such that all roots are equal and the number of roots is a multiple
     // of 'N', it's still solvable.
+    // TODO: This is good at exploding the amount of work and stalling the
+    // program.
+    /*
     std::set<variable> live = live_variables(constant);
     for(variable v: live)
     {
@@ -927,6 +930,7 @@ std::optional<polynomial> try_get_nth_root(const polynomial& constant, unsigned 
             return p;
         }
     }
+    */
 
     return {};
 }
@@ -1084,7 +1088,10 @@ bool pin(
         {
             // If it's already zero, there's nothing to be done here.
             if(*value == 0)
+            {
+                ++it;
                 continue;
+            }
             else
             {
                 // Can't set a constant factor to zero in any way.

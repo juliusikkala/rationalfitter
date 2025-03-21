@@ -132,7 +132,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
 
     if(linear_combination && groups.size() == fit_parameters.size()+1)
     { // Great, linear least squares should work.
-        //printf("Starting least squares\n");
+        printf("Starting least squares\n");
         matrix A;
         matrix b;
 
@@ -175,7 +175,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         b.h = b.values.size();
 
         coefficients = least_squares(A, b);
-        //printf("Least squares loss: %f\n", get_loss(func, coefficients));
+        printf("Least squares loss: %f\n", (double)get_loss(func, coefficients));
 
         std::optional<rational> res = assign_coefficients(func, coefficients);
         if(try_get_constant_value(func.denominator) == 1.0)
@@ -191,7 +191,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
     // able to get derivatives from the rational.
     // https://en.wikipedia.org/wiki/Gauss%E2%80%93Newton_algorithm
 
-    //printf("Starting Gauss-Newton NLLS\n");
+    printf("Starting Gauss-Newton NLLS\n");
 
     // Compute derivatives along parameters.
     std::vector<rational> derivatives(fit_parameters.size());
@@ -267,7 +267,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
 
         // Just to print the loss
         number loss = get_loss(func, coefficients);
-        //printf("Iteration %u loss: %f\n", iter, loss);
+        printf("Iteration %u loss: %f\n", iter, (double)loss);
         if(loss < best_loss)
         {
             best_coefficients = coefficients;
@@ -291,26 +291,34 @@ std::optional<rational> fit_eliminate_variable(const rational& func, const fit_p
     std::set<variable> live_vars = live_variables(fit_src);
     if(live_vars.size() == 0)
         return fit_src;
+    std::vector<variable> live_vars_vec;
+    for(variable var: live_vars)
+        live_vars_vec.push_back(var);
 
     variable best_loss_var = 0;
     number best_loss = -1.0;
     std::optional<rational> best_result;
-    for(variable var: live_vars)
+#pragma omp parallel for
+    for(size_t i = 0; i < live_vars_vec.size(); ++i)
     {
+        variable var = live_vars_vec[i];
         rational without_var = assign(fit_src, var, 0.0);
         std::optional<rational> result = fit(without_var, params);
         if(!result.has_value())
-            return {};
+            continue;
 
         std::optional<number> loss = l2_loss(*result, params);
         if(!loss.has_value())
-            return {};
+            continue;
 
-        if(*loss < best_loss || best_loss < 0)
+#pragma omp critical
         {
-            best_loss_var = var;
-            best_loss = *loss;
-            best_result = result;
+            if(*loss < best_loss || best_loss < 0)
+            {
+                best_loss_var = var;
+                best_loss = *loss;
+                best_result = result;
+            }
         }
     }
     eliminated_variables.push_back(best_loss_var);
