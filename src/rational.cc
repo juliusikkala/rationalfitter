@@ -135,16 +135,24 @@ std::set<variable> live_variables(const rational& r)
 
 polynomial get_zero_polynomial(const rational& r, number right_side)
 {
-    polynomial res = r.numerator;
-
-    for(const term& t: r.denominator.terms)
+    // If the right side is NaN, this means that our denominator is zero.
+    if(std::isnan((double)right_side))
     {
-        term nt = t;
-        nt.coefficient = -nt.coefficient * right_side;
-        res.terms.push_back(nt);
+        return r.denominator;
     }
+    else
+    {
+        polynomial res = r.numerator;
 
-    return simplify(res);
+        for(const term& t: r.denominator.terms)
+        {
+            term nt = t;
+            nt.coefficient = -nt.coefficient * right_side;
+            res.terms.push_back(nt);
+        }
+
+        return simplify(res);
+    }
 }
 
 std::optional<number> evaluate(const rational& r, const std::vector<number>& variable_values)

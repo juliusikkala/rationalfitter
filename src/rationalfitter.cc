@@ -361,6 +361,13 @@ void skip_spaces(const char*& str)
 
 bool read_double(const char*& str, double& d)
 {
+    if(*str == '!')
+    {
+        d = 0.0/0.0;
+        str++;
+        return true;
+    }
+
     char* out = nullptr;
     d = strtod(str, &out);
     if(*out == 0 || strchr(" =\t\n", *out))
@@ -861,7 +868,8 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             polynomial zero_poly = get_zero_polynomial(zero, o.value);
 
             std::vector<polynomial> vec = {target.numerator, target.denominator};
-            if(!pin(zero_poly, zero.denominator, ctx.axes.data(), ctx.axes.size()-1, vec))
+            polynomial nonzero = std::isnan(o.value) ? polynomial::create(1) : zero.denominator;
+            if(!pin(zero_poly, nonzero, ctx.axes.data(), ctx.axes.size()-1, vec))
             {
                 fprintf(stderr, "Pinning failed!\n");
                 return false;
@@ -1094,8 +1102,11 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
     }},
 };
 
+#include <fenv.h>
+
 int main(int argc, char** argv)
 {
+    //feenableexcept(FE_DIVBYZERO);
     if(argc != 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)
     {
         fprintf(stderr, "Usage: %s <fit-file>\nSee README.md for instructions.", argv[0]);
@@ -1142,7 +1153,7 @@ int main(int argc, char** argv)
         std::vector<parameter> parameters;
         while(*command_list && *command_list != '\n')
         {
-            if((*command_list >= '0' && *command_list <= '9') || *command_list == '-')
+            if((*command_list >= '0' && *command_list <= '9') || *command_list == '-' || *command_list == '!')
             {
                 double d;
                 if(!read_double(command_list, d))

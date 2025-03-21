@@ -185,7 +185,10 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
 
         // Otherwise, we continue on to non-linear optimization with the above
         // coefficients as a guess.
+        if(params.nlls_max_iterations == 0)
+            return res;
     }
+
 
     // This implementation uses the Gauss-Newton algorithm, since we're usually
     // able to get derivatives from the rational.
@@ -251,7 +254,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
             // an extremity.
             if(cant_eval) continue;
 
-            for(size_t i = 1; i < derivative_values.size(); ++i)
+            for(size_t i = 0; i < derivative_values.size(); ++i)
                 J.values.push_back((double)derivative_values[i]);
             r.values.push_back((double)(params.data.at(params.right_side_variable)[j] - *func_value));
         }
@@ -278,8 +281,6 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         }
         else converged = true;
     }
-    if(!converged)
-        return {};
     return assign_coefficients(func, best_coefficients);
 }
 
@@ -321,6 +322,7 @@ std::optional<rational> fit_eliminate_variable(const rational& func, const fit_p
             }
         }
     }
-    eliminated_variables.push_back(best_loss_var);
+    if(best_loss != -1.0)
+        eliminated_variables.push_back(best_loss_var);
     return best_result;
 }
