@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cfloat>
 #include <string>
+#include <iomanip>
+#include <sstream>
 
 // This class is effectively just a double, but it has a biased rounding towards
 // zero. This makes comparisons more reliable. It's not just a dumb flat
@@ -70,12 +72,30 @@ inline number operator+(double a, const number& b)
 inline number operator-(double a, const number& b)
 { return number(a) - b; }
 
-inline std::string to_string(number n)
+inline std::string to_string(number n, bool scientific = false, bool desmos = false)
 {
     double val = (double)n;
-    return double(int32_t(val)) == val ?
-        std::to_string(int32_t(val)) :
-        std::to_string(val);
+    std::stringstream stream;
+    if (double(int32_t(val)) == val)
+        stream << int32_t(val);
+    else
+    {
+        if (scientific)
+            stream << std::scientific;
+        stream << std::setprecision(17);
+        stream << val;
+    }
+    // Desmos mode -.-
+    std::string res = stream.str();
+    if(desmos)
+    {
+        if (auto id = res.find("e"); id != std::string::npos)
+        {
+            res.replace(id, 1, "*10^{");
+            res += "}";
+        }
+    }
+    return res;
 }
 
 inline number pow(number base, number exp)

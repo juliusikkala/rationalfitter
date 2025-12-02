@@ -64,12 +64,16 @@ std::string polynomial_to_string(
     const polynomial& p,
     bool group_by_axes,
     bool multiline,
+    bool scientific,
+    bool desmos,
     const char* pow_symbol = "^"
 );
 
 std::string term_to_string(
     context& ctx,
     const term& t,
+    bool scientific,
+    bool desmos,
     const char* pow_symbol
 ){
     if(t.coefficient == 0)
@@ -81,7 +85,7 @@ std::string term_to_string(
     bool show_coefficient = false;
     if(coefficient != 1 || t.mul.size() == 0)
     {
-        ret += to_string(coefficient);
+        ret += to_string(coefficient, scientific, desmos);
         show_coefficient = true;
     }
 
@@ -92,16 +96,20 @@ std::string term_to_string(
         const var_power& vp = t.mul[i];
         if(vp.roots.has_value())
         {
-            ret += "roots(" + polynomial_to_string(ctx, vp.roots->expr, true, false, pow_symbol) + ", " + ctx.var_names[vp.roots->var] + ")";
+            ret += "roots(" + polynomial_to_string(ctx, vp.roots->expr, true, false, scientific, desmos, pow_symbol) + ", " + ctx.var_names[vp.roots->var] + ")";
         }
         else
         {
             ret += ctx.var_names[vp.id];
         }
-        if(vp.degree != 1)
+        if(vp.degree != 1 && pow_symbol)
         {
             ret += pow_symbol;
+            if(desmos)
+                ret += "{";
             ret += std::to_string(vp.degree);
+            if(desmos)
+                ret += "}";
         }
     }
 
@@ -113,6 +121,8 @@ std::string polynomial_to_string(
     const polynomial& p,
     bool group_by_axes,
     bool multiline,
+    bool scientific,
+    bool desmos,
     const char* pow_symbol
 ){
     std::vector<variable>& indeterminates = group_by_axes ? ctx.axes : ctx.coefficients;
@@ -127,7 +137,7 @@ std::string polynomial_to_string(
         bool first = true;
         for(const term& t: poly.terms)
         {
-            std::string tstr = term_to_string(ctx, t, pow_symbol);
+            std::string tstr = term_to_string(ctx, t, scientific, desmos, pow_symbol);
             if(tstr.empty())
                 continue;
 
@@ -146,7 +156,7 @@ std::string polynomial_to_string(
         term indeterminate_term;
         indeterminate_term.coefficient = 1;
         indeterminate_term.mul = group.indeterminates;
-        std::string indeterminate_string = term_to_string(ctx, indeterminate_term, pow_symbol);
+        std::string indeterminate_string = term_to_string(ctx, indeterminate_term, scientific, desmos, pow_symbol);
 
         bool implicit_coefficient = false;
         if(poly.terms.size() > 1 && (groups.size() > 1 || indeterminate_string != "1"))
@@ -186,10 +196,12 @@ std::string rational_to_string(
     const rational& r,
     bool group_by_axes,
     bool multiline,
+    bool scientific,
+    bool desmos,
     const char* pow_symbol="^"
 ){
-    std::string num = polynomial_to_string(ctx, r.numerator, group_by_axes, multiline, pow_symbol);
-    std::string denom = polynomial_to_string(ctx, r.denominator, group_by_axes, multiline, pow_symbol);
+    std::string num = polynomial_to_string(ctx, r.numerator, group_by_axes, multiline, scientific, desmos, pow_symbol);
+    std::string denom = polynomial_to_string(ctx, r.denominator, group_by_axes, multiline, scientific, desmos, pow_symbol);
 
     if(denom == "1") return num;
 
@@ -199,8 +211,64 @@ std::string rational_to_string(
     return num + "/" + denom;
 }
 
+std::string polynomial_to_c(
+    context& ctx, const polynomial& p, const std::string& varname, bool fma
+){
+    std::string code;
+    if (fma)
+    {
+        std::string var;
+        std::vector<number> factors(1);
+        for(const term& t: p.terms)
+        {
+            for(const var_power& vp: t.mul)
+            {
+                var = ctx.var_names[vp.id];
+                if (factors.size() <= vp.degree)
+                    factors.resize(vp.degree+1, number());
+                factors[vp.degree] = t.coefficient;
+            }
+            if (t.mul.size() == 0)
+                factors[0] = t.coefficient;
+        }
+
+        if (factors.size() == 1)
+        {
+            code += "    float "+varname+" = " + to_string(factors[0], true) + " * " + var + ";\n";
+        }
+        else for (size_t i = 0; i+1 < factors.size(); ++i)
+        {
+            size_t j = factors.size()-1-i;
+            if (i == 0)
+                code += "    float "+varname+" = " + to_string(factors[j], true) + " * " + var;
+            else
+                code += "    "+varname+" = " + varname + " * " + var;
+
+            if (factors[j] != 0)
+                code += " + " + to_string(factors[j-1], true);
+            code += ";\n";
+        }
+    }
+    else
+    {
+        code += "    float " + varname + " = 0;\n";
+        for(const term& t: p.terms)
+        {
+            std::string tstr = term_to_string(ctx, t, true, false, "");
+            if(tstr[0] == '-')
+            {
+                code += "    "+varname+" -=";
+                tstr.erase(tstr.begin());
+            }
+            else code += "    "+varname+" += ";
+            code += tstr + ";\n";
+        }
+    }
+    return code;
+}
+
 std::string rational_to_c(
-    context& ctx, const rational& r
+    context& ctx, const rational& r, bool fma
 ){
     std::map<std::string, int> vars_max_degrees;
     bool has_roots = false;
@@ -216,10 +284,14 @@ std::string rational_to_c(
             degree = degree > vp.degree ? degree : vp.degree;
         }
     };
+
     for(const term& t: r.numerator.terms) check_vars(t);
     for(const term& t: r.denominator.terms) check_vars(t);
     if(has_roots)
         return "(cannot represent roots() in C)";
+    // Can't print in FMA mode if there are more than one variable.
+    if (vars_max_degrees.size() > 1) fma = false;
+
     std::string code = "float func(";
 
     bool first_param = true;
@@ -234,44 +306,25 @@ std::string rational_to_c(
     }
     code += ")\n{\n";
 
-    for(auto& pair: vars_max_degrees)
+    if (!fma)
     {
-        int degree = pair.second;
-        std::string prevname = pair.first;
-        for(unsigned j = 2; j <= degree; ++j)
+        for(auto& pair: vars_max_degrees)
         {
-            std::string dname = pair.first + std::to_string(j);
-            code += "    float "+dname+" = "+prevname+" * "+pair.first+";\n";
-            prevname = dname;
+            int degree = pair.second;
+            std::string prevname = pair.first;
+            for(unsigned j = 2; j <= degree; ++j)
+            {
+                std::string dname = pair.first + std::to_string(j);
+                code += "    float "+dname+" = "+prevname+" * "+pair.first+";\n";
+                prevname = dname;
+            }
         }
     }
-    code += "    float num = 0;\n";
-    for(const term& t: r.numerator.terms)
-    {
-        std::string tstr = term_to_string(ctx, t, "");
-        if(tstr[0] == '-')
-        {
-            code += "    num -=";
-            tstr.erase(tstr.begin());
-        }
-        else code += "    num += ";
-        code += tstr + ";\n";
-    }
+    code += polynomial_to_c(ctx, r.numerator, "num", fma);
 
     if(try_get_constant_value(r.denominator) != 1.0)
     {
-        code += "    float denom = 0;\n";
-        for(const term& t: r.denominator.terms)
-        {
-            std::string tstr = term_to_string(ctx, t, "");
-            if(tstr[0] == '-')
-            {
-                code += "    denom -=";
-                tstr.erase(tstr.begin());
-            }
-            else code += "    denom += ";
-            code += tstr + ";\n";
-        }
+        code += polynomial_to_c(ctx, r.denominator, "denom", fma);
         code += "    return num*(1.0f/denom);\n}";
     }
     else
@@ -665,6 +718,9 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         bool linear_combination = false;
         bool multiline = false;
         bool c_code = false;
+        bool fma = false;
+        bool scientific = false;
+        bool desmos = false;
         for(const parameter& p: parameters)
         {
             if(const std::string* val = std::get_if<std::string>(&p))
@@ -672,6 +728,9 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 if(*val == "lc") linear_combination = true;
                 else if(*val == "multiline") multiline = true;
                 else if(*val == "c") c_code = true;
+                else if(*val == "fma") fma = true;
+                else if(*val == "scientific") scientific = true;
+                else if(*val == "desmos") desmos = true;
             }
             else
             {
@@ -682,12 +741,14 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
 
         std::string str;
         if(c_code)
-            str = rational_to_c(ctx, ctx.r);
+            str = rational_to_c(ctx, ctx.r, fma);
         else str = rational_to_string(
             ctx,
             ctx.r,
             !linear_combination,
             multiline,
+            scientific,
+            desmos,
             "^"
         );
         printf("%s\n", str.c_str());
@@ -780,7 +841,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         std::optional<rational> result = differentiate(ctx.r, id);
         if(!result.has_value())
         {
-            fprintf(stderr, "Differentiation failed for %s\n", rational_to_string(ctx, ctx.r, true, false).c_str());
+            fprintf(stderr, "Differentiation failed for %s\n", rational_to_string(ctx, ctx.r, true, false, false, false).c_str());
             return false;
         }
         ctx.r = *result;
@@ -1106,6 +1167,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
 
 int main(int argc, char** argv)
 {
+    setlocale(LC_ALL, "C");
     //feenableexcept(FE_DIVBYZERO);
     if(argc != 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)
     {
