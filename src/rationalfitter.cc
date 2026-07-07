@@ -251,7 +251,7 @@ std::string polynomial_to_c(
     }
     else
     {
-        code += "    float " + varname + " = 0;\n";
+        code += "    float " + varname + " = 0.0;\n";
         for(const term& t: p.terms)
         {
             std::string tstr = term_to_string(ctx, t, true, false, "");
@@ -1142,7 +1142,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 }
                 result = candidate;
                 printf(
-                    "Eliminated variable %s, current loss %f\n",
+                    "Eliminated variable %s, current loss %e\n",
                     eliminated_name, loss
                 );
             }

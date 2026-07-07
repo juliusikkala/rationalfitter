@@ -1,8 +1,10 @@
 #include "optimization.hh"
+#include <lapacke.h>
 #include <cstdio>
 
 matrix least_squares(const matrix& A, const matrix& b)
 {
+#if 0
     auto[R, v] = lstsq_r_decompose(A, b);
 
     //printf("A = %s\n", to_string(A, "    ").c_str());
@@ -12,6 +14,7 @@ matrix least_squares(const matrix& A, const matrix& b)
 
     matrix x = matrix::zeroes(1, A.w);
 
+
     for(int i = R.w-1; i >= 0; --i)
     {
         double right_side = v(0, i);
@@ -19,6 +22,18 @@ matrix least_squares(const matrix& A, const matrix& b)
             right_side -= R(j,i) * x(0, j);
         x(0, i) = right_side / R(i,i);
     }
+#else
+    matrix Acopy = A;
+    matrix x = b;
+
+    lapack_int res = LAPACKE_dgels(
+        LAPACK_ROW_MAJOR, 'N', A.h, A.w,
+        1, Acopy.values.data(),
+        A.w, x.values.data(), 1);
+
+    x.values.resize(A.w);
+    x.h = A.w;
+#endif
     return x;
 }
 
@@ -132,7 +147,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
 
     if(linear_combination && groups.size() == fit_parameters.size()+1)
     { // Great, linear least squares should work.
-        printf("Starting least squares\n");
+        //printf("Starting least squares\n");
         matrix A;
         matrix b;
 
@@ -175,7 +190,14 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
         b.h = b.values.size();
 
         coefficients = least_squares(A, b);
+        /*
         printf("Least squares loss: %f\n", (double)get_loss(func, coefficients));
+
+        for(size_t i = 0; i < fit_parameters.size(); ++i)
+        {
+            printf("%d = %s\n", fit_parameters[i], to_string(coefficients(0,i)).c_str());
+        }
+        */
 
         std::optional<rational> res = assign_coefficients(func, coefficients);
         if(try_get_constant_value(func.denominator) == 1.0)
@@ -194,7 +216,7 @@ std::optional<rational> fit(const rational& func, const fit_params& params)
     // able to get derivatives from the rational.
     // https://en.wikipedia.org/wiki/Gauss%E2%80%93Newton_algorithm
 
-    printf("Starting Gauss-Newton NLLS\n");
+    //printf("Starting Gauss-Newton NLLS\n");
 
     // Compute derivatives along parameters.
     std::vector<rational> derivatives(fit_parameters.size());
