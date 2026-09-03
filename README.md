@@ -73,7 +73,7 @@ axis.
 
 Examples:
 * `polynomial 2 x y` creates a 2nd degree polynomial `a + b * x + c * x^2 = y`
-* `polynomial 3 x y z` creates a 3rd degree polynomial over `x` and `y`, resulting in `z`.
+* `polynomial 3 x y z` creates a 3rd degree multivariate polynomial over `x` and `y`, resulting in `z`.
 
 ### `rational`
 
@@ -195,6 +195,7 @@ Named parameters, all are optional:
   values let the algorithm run longer even if there is low to no improvement. Default = 0.01.
 * `maxiterations=<count>` adjusts the maximum number of Gauss-Newton iterations
   before giving up. Default = 100.
+* `eliminateonly=true` does not assign the fitted values to the variables
 
 Examples:
 * `fit x=x_data y=y_data z=t1_data maxloss=0.001` fits a 2D function to the

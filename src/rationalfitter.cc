@@ -716,6 +716,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
     {"print", [](context& ctx, const std::vector<parameter>& parameters)->bool
     {
         bool linear_combination = false;
+        const char* exp = "^";
         bool multiline = false;
         bool c_code = false;
         bool fma = false;
@@ -726,6 +727,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             if(const std::string* val = std::get_if<std::string>(&p))
             {
                 if(*val == "lc") linear_combination = true;
+                else if(*val == "python") exp = "**";
                 else if(*val == "multiline") multiline = true;
                 else if(*val == "c") c_code = true;
                 else if(*val == "fma") fma = true;
@@ -749,7 +751,7 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
             multiline,
             scientific,
             desmos,
-            "^"
+            exp
         );
         printf("%s\n", str.c_str());
         return true;
@@ -1069,11 +1071,13 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         double maxloss = 0;
         double convergence = 0.01;
         double step = 0.1;
+        std::string eliminateonly = "";
         NAMED_PARAM(maxiterations, false);
         NAMED_PARAM(step, false);
         NAMED_PARAM(convergence, false);
         NAMED_PARAM(eliminate, false);
         NAMED_PARAM(maxloss, false);
+        NAMED_PARAM(eliminateonly, false);
 
         fit_params params;
         params.right_side_variable = ctx.axes.back();
@@ -1134,11 +1138,23 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
                 const char* eliminated_name = ctx.var_names[eliminated].c_str();
                 if(maxloss != 0 && loss > maxloss)
                 {
-                    printf(
-                        "Not eliminating variable %s, loss %f exceeds maxloss %f\n",
-                        eliminated_name, loss, maxloss
-                    );
-                    break;
+                    if (loss < baseline_loss)
+                    {
+                        baseline_loss = loss;
+                        printf(
+                            "Eliminating variable %s, despite loss %f exceeding maxloss %f; found better fit than baseline\n",
+                            eliminated_name, loss, maxloss
+                        );
+                    }
+                    else
+                    {
+                        printf(
+                            "Not eliminating variable %s, loss %f exceeds maxloss %f\n",
+                            eliminated_name, loss, maxloss
+                        );
+                        eliminated_variables.pop_back();
+                        break;
+                    }
                 }
                 result = candidate;
                 printf(
@@ -1158,7 +1174,12 @@ const std::unordered_map<std::string, command_handler> command_handlers = {
         std::optional<number> loss = l2_loss(*result, params);
         if(loss.has_value())
             printf("Final L2 loss: %f\n", (double)*loss);
-        ctx.r = *result;
+        if (eliminateonly == "true")
+        {
+            for(variable var: eliminated_variables)
+                ctx.r = assign(ctx.r, var, 0.0);
+        }
+        else ctx.r = *result;
         return true;
     }},
 };
